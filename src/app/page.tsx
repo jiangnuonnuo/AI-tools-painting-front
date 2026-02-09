@@ -419,13 +419,6 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-1">
                 <button 
-                  onClick={handleNewChat}
-                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all shrink-0"
-                  title="New Chat"
-                >
-                  <Icons.Plus className="w-5 h-5" />
-                </button>
-                <button 
                   onClick={() => setIsChatOpen(false)}
                   className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-all shrink-0"
                 >
@@ -501,19 +494,28 @@ export default function Home() {
                 rows={1}
                 style={{ height: 'auto', minHeight: '44px' }}
               />
-              <button
-                onClick={handleSendMessage}
-                disabled={!inputValue.trim() || isSending}
-                className={`
-                  p-2.5 rounded-lg mb-0.5 transition-all duration-200 flex-shrink-0
-                  ${inputValue.trim() && !isSending
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 active:scale-95' 
-                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                  }
-                `}
-              >
-                {isSending ? <Icons.Loader className="w-4 h-4" /> : <Icons.Send className="w-4 h-4" />}
-              </button>
+              <div className="flex gap-1 mb-0.5 shrink-0">
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!inputValue.trim() || isSending}
+                    className={`
+                      p-2.5 rounded-lg transition-all duration-200
+                      ${inputValue.trim() && !isSending
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 active:scale-95' 
+                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                      }
+                    `}
+                  >
+                    {isSending ? <Icons.Loader className="w-4 h-4" /> : <Icons.Send className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={handleNewChat}
+                    className="p-2.5 rounded-lg bg-slate-100 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200 border border-transparent hover:border-indigo-100"
+                    title="New Chat"
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                  </button>
+              </div>
             </div>
             <div className="text-center mt-2">
                 <span className="text-[10px] text-slate-400">
