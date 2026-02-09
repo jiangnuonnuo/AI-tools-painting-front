@@ -2,6 +2,10 @@
 
 import { DrawIoEmbed, DrawIoEmbedRef } from 'react-drawio';
 import { useRef, useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { getUserInfo, clearUserInfo } from '@/utils/cookie';
+import { agentApi } from '@/api/agent';
+import { AiAgentConfigResponseDTO } from '@/types/api';
 
 // Message type definition
 type Message = {
@@ -55,25 +59,42 @@ const Icons = {
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
     </svg>
+  ),
+  Logout: ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+      <polyline points="16 17 21 12 16 7"></polyline>
+      <line x1="21" y1="12" x2="9" y2="12"></line>
+    </svg>
   )
 };
 
 export default function Home() {
+  const router = useRouter();
   const [imgData, setImgData] = useState<string | null>(null);
   const drawioRef = useRef<DrawIoEmbedRef>(null);
   
+  // User State
+  const [currentUser, setCurrentUser] = useState('');
+
   // Chat State
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
       role: 'agent',
-      content: '你好！我是你的智能架构助手。我可以帮你优化流程图、解释架构模式或回答任何技术问题。',
+      content: '你好！我是你的智能架构助手。请选择一个智能体开始对话。',
       timestamp: Date.now()
     }
   ]);
   const [inputValue, setInputValue] = useState('');
+  const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Agent State
+  const [agents, setAgents] = useState<AiAgentConfigResponseDTO[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [sessionId, setSessionId] = useState('');
 
   const exportDiagram = () => {
     if (drawioRef.current) {
@@ -91,29 +112,116 @@ export default function Home() {
     scrollToBottom();
   }, [messages, isChatOpen]);
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+  // Check Login & Load Agents
+  useEffect(() => {
+    const userInfo = getUserInfo();
+    if (!userInfo || !userInfo.user) {
+      router.push('/login');
+      return;
+    }
+    setCurrentUser(userInfo.user);
+
+    // Load Agents
+    const loadAgents = async () => {
+      try {
+        const res = await agentApi.queryAiAgentConfigList();
+        setAgents(res.data || []);
+        if (res.data && res.data.length > 0) {
+          // Try to restore last agent or default to first
+          const lastAgentId = localStorage.getItem('ai_agent_last_agent');
+          if (lastAgentId && res.data.find(a => a.agentId === lastAgentId)) {
+            setSelectedAgentId(lastAgentId);
+          } else {
+            setSelectedAgentId(res.data[0].agentId);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load agents:', error);
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'agent',
+          content: '加载智能体列表失败，请检查后端服务是否启动。',
+          timestamp: Date.now()
+        }]);
+      }
+    };
+    loadAgents();
+  }, [router]);
+
+  const handleLogout = () => {
+    clearUserInfo();
+    router.push('/login');
+  };
+
+  const handleAgentChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newAgentId = e.target.value;
+    setSelectedAgentId(newAgentId);
+    setSessionId(''); // Reset session when agent changes
+    localStorage.setItem('ai_agent_last_agent', newAgentId);
+  };
+
+  const handleSendMessage = async () => {
+    if (!inputValue.trim() || isSending) return;
+    
+    if (!selectedAgentId) {
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'agent',
+        content: '请先选择一个智能体。',
+        timestamp: Date.now()
+      }]);
+      return;
+    }
+
+    const userMsgContent = inputValue;
+    setInputValue('');
+    setIsSending(true);
 
     const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: inputValue,
+      content: userMsgContent,
       timestamp: Date.now()
     };
-
     setMessages(prev => [...prev, userMsg]);
-    setInputValue('');
 
-    // Simulate Agent Reply
-    setTimeout(() => {
+    try {
+      // 1. Ensure Session
+      let currentSessionId = sessionId;
+      if (!currentSessionId) {
+        const sessionRes = await agentApi.createSession(selectedAgentId, currentUser);
+        currentSessionId = sessionRes.data.sessionId;
+        setSessionId(currentSessionId);
+      }
+
+      // 2. Send Message
+      const chatRes = await agentApi.chat({
+        agentId: selectedAgentId,
+        userId: currentUser,
+        sessionId: currentSessionId,
+        message: userMsgContent
+      });
+
       const agentMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'agent',
-        content: `我收到了你的消息："${userMsg.content}"。\n\n这是一个模拟的智能回复。在实际应用中，这里会连接到 LLM API 来分析你的绘图需求或回答问题。`,
+        content: chatRes.data.content,
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, agentMsg]);
-    }, 1200);
+
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'agent',
+        content: error instanceof Error ? `Error: ${error.message}` : '发送失败，请重试。',
+        timestamp: Date.now()
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -139,12 +247,25 @@ export default function Home() {
         </div>
         
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200">
+             <div className="w-2 h-2 rounded-full bg-green-500"></div>
+             <span className="text-xs font-medium text-slate-600">{currentUser || 'Guest'}</span>
+          </div>
+
           <button 
             onClick={exportDiagram}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900 transition-all text-sm font-medium shadow-sm active:scale-95"
           >
             <Icons.Download className="text-slate-500" />
             Export
+          </button>
+
+          <button
+             onClick={handleLogout}
+             className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
+             title="Logout"
+          >
+            <Icons.Logout />
           </button>
           
           {!isChatOpen && (
@@ -188,19 +309,30 @@ export default function Home() {
           `}
         >
           {/* Chat Header */}
-          <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white/80 backdrop-blur-sm sticky top-0">
-            <div className="flex items-center gap-2.5">
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-200">
+          <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-200 shrink-0">
                 <Icons.Sparkles className="w-4 h-4" />
               </div>
-              <div>
-                <span className="block text-sm font-semibold text-slate-800 leading-tight">AI Assistant</span>
+              <div className="flex-1 min-w-0">
+                <select 
+                  value={selectedAgentId} 
+                  onChange={handleAgentChange}
+                  className="w-full bg-transparent text-sm font-semibold text-slate-800 focus:outline-none cursor-pointer truncate"
+                >
+                  {agents.length === 0 && <option value="">Loading agents...</option>}
+                  {agents.map(agent => (
+                    <option key={agent.agentId} value={agent.agentId}>
+                      {agent.agentName}
+                    </option>
+                  ))}
+                </select>
                 <span className="block text-xs text-green-500 font-medium leading-tight">● Online</span>
               </div>
             </div>
             <button 
               onClick={() => setIsChatOpen(false)}
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-all"
+              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-all shrink-0 ml-2"
             >
               <Icons.Close className="w-5 h-5" />
             </button>
@@ -229,16 +361,14 @@ export default function Home() {
                     </span>
                     <div 
                     className={`
-                        p-3.5 text-sm leading-relaxed shadow-sm
+                        p-3.5 text-sm leading-relaxed shadow-sm whitespace-pre-wrap
                         ${msg.role === 'user' 
                         ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm' 
                         : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm'
                         }
                     `}
                     >
-                    {msg.content.split('\n').map((line, i) => (
-                        <p key={i} className={i > 0 ? 'mt-2' : ''}>{line}</p>
-                    ))}
+                    {msg.content}
                     </div>
                 </div>
               </div>
@@ -253,17 +383,18 @@ export default function Home() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask me anything about your diagram..."
+                placeholder={isSending ? "Sending..." : "Ask me anything..."}
+                disabled={isSending}
                 className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-32 min-h-[44px]"
                 rows={1}
                 style={{ height: 'auto', minHeight: '44px' }}
               />
               <button
                 onClick={handleSendMessage}
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || isSending}
                 className={`
                   p-2.5 rounded-lg mb-0.5 transition-all duration-200 flex-shrink-0
-                  ${inputValue.trim() 
+                  ${inputValue.trim() && !isSending
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 active:scale-95' 
                     : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                   }
