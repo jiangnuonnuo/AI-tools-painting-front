@@ -210,6 +210,17 @@ export default function Home() {
       };
       setMessages(prev => [...prev, agentMsg]);
 
+      // Try to load content as Draw.io XML if it looks like XML
+      if (drawioRef.current && chatRes.data.content && (chatRes.data.content.includes('<mxGraphModel') || chatRes.data.content.includes('<mxfile'))) {
+        try {
+          drawioRef.current.load({
+            xml: chatRes.data.content
+          });
+        } catch (e) {
+          console.error('Failed to load diagram:', e);
+        }
+      }
+
     } catch (error) {
       console.error('Chat error:', error);
       const errorMsg: Message = {
