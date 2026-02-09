@@ -78,6 +78,12 @@ const Icons = {
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`animate-spin ${className}`}>
       <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
     </svg>
+  ),
+  Plus: ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <line x1="12" y1="5" x2="12" y2="19"></line>
+      <line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
   )
 };
 
@@ -176,6 +182,26 @@ export default function Home() {
     setSelectedAgentId(newAgentId);
     setSessionId(''); // Reset session when agent changes
     localStorage.setItem('ai_agent_last_agent', newAgentId);
+  };
+
+  const handleNewChat = async () => {
+    if (!selectedAgentId || !currentUser) return;
+    
+    try {
+        const res = await agentApi.createSession(selectedAgentId, currentUser);
+        setSessionId(res.data.sessionId);
+        setMessages([
+            {
+                id: Date.now().toString(),
+                role: 'agent',
+                content: '已为您开启新的会话。',
+                timestamp: Date.now()
+            }
+        ]);
+        setInputValue('');
+    } catch (error) {
+        console.error('Failed to create new session:', error);
+    }
   };
 
   const performSendMessage = async (displayContent: string, apiContent: string) => {
@@ -391,12 +417,21 @@ export default function Home() {
                 <span className="block text-xs text-green-500 font-medium leading-tight">● Online</span>
               </div>
             </div>
-            <button 
-              onClick={() => setIsChatOpen(false)}
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-all shrink-0 ml-2"
-            >
-              <Icons.Close className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1">
+                <button 
+                  onClick={handleNewChat}
+                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all shrink-0"
+                  title="New Chat"
+                >
+                  <Icons.Plus className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={() => setIsChatOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-all shrink-0"
+                >
+                  <Icons.Close className="w-5 h-5" />
+                </button>
+            </div>
           </div>
 
           {/* Messages Area */}
