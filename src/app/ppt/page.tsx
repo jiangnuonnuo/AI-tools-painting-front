@@ -242,6 +242,18 @@ const DEFAULT_THEME = THEMES[0];
 // Shape elements are now fully skipped (theme handles all decorations)
 
 // Generate PPTX from PptData with professional theme
+// Smart layout inference — ensure visual diversity even when AI doesn't specify layout
+const inferLayout = (slideData: PptSlide, slideIdx: number, totalSlides: number): string => {
+  let layout = slideData.layout || '';
+  const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
+  const isEndSlide = layout === 'end_slide' || slideIdx === totalSlides - 1;
+  if (!layout && !isTitleSlide && !isEndSlide) {
+    const diverseLayouts = ['content_slide', 'card_3col', 'comparison', 'timeline', 'data_highlight', 'quote_slide'];
+    layout = diverseLayouts[(slideIdx - 1) % diverseLayouts.length];
+  }
+  return layout;
+};
+
 const generatePptx = (data: PptData, theme: PptTheme) => {
   const pres = new pptxgen();
   pres.title = data.title;
@@ -249,59 +261,82 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
 
   data.slides.forEach((slideData, slideIdx) => {
     const slide = pres.addSlide();
-    const layout = slideData.layout || '';
+    const layout = inferLayout(slideData, slideIdx, data.slides.length);
     const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
     const isEndSlide = layout === 'end_slide' || slideIdx === data.slides.length - 1;
 
-    // === STEP 1: Professional theme decoration (always rendered) ===
+    // === STEP 1: Layout-specific theme decoration ===
+    // Helper: add rectangle shape
+    const addRect = (x: number, y: number, w: number, h: number, color: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      slide.addShape((pres as any).shapes.RECTANGLE, {
+        x, y, w, h, fill: { color }, line: { width: 0 },
+      });
+    };
+
     if (isTitleSlide || isEndSlide) {
-      // ---- Cover / End Slide: Top-half navy + bottom white ----
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0, y: 0, w: 13.33, h: theme.coverNavyHeight,
-        fill: { color: theme.primary },
-        line: { width: 0 },
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0, y: theme.coverNavyHeight, w: 13.33, h: 0.12,
-        fill: { color: theme.accent },
-        line: { width: 0 },
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0, y: 7.15, w: 13.33, h: 0.35,
-        fill: { color: theme.primary },
-        line: { width: 0 },
-      });
+      // ── Cover / End: Full-width primary top + accent stripe + bottom bar ──
+      addRect(0, 0, 13.33, theme.coverNavyHeight, theme.primary);
+      addRect(0, theme.coverNavyHeight, 13.33, 0.12, theme.accent);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      // Decorative: large circle watermark
+      addRect(10.5, 0.6, 2.2, 2.2, theme.primaryLight);
+    } else if (layout === 'card_3col') {
+      // ── 3-Column Cards: Short header + 3 card background blocks ──
+      addRect(0, 0, 13.33, 0.9, theme.primary);
+      addRect(0, 0.9, 13.33, 0.06, theme.accent);
+      // Three card backgrounds
+      addRect(0.5, 1.6, 3.8, 5.0, theme.offWhite);
+      addRect(4.75, 1.6, 3.8, 5.0, theme.offWhite);
+      addRect(9.0, 1.6, 3.8, 5.0, theme.offWhite);
+      // Card top accent bars
+      addRect(0.5, 1.6, 3.8, 0.12, theme.primary);
+      addRect(4.75, 1.6, 3.8, 0.12, theme.primary);
+      addRect(9.0, 1.6, 3.8, 0.12, theme.primary);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+    } else if (layout === 'comparison') {
+      // ── Comparison: Left-right symmetric color blocks ──
+      addRect(0, 0, 13.33, 0.9, theme.primary);
+      addRect(0, 0.9, 13.33, 0.06, theme.accent);
+      // Left block
+      addRect(0.5, 1.5, 5.9, 5.2, theme.offWhite);
+      addRect(0.5, 1.5, 5.9, 0.1, theme.primary);
+      // Right block
+      addRect(6.9, 1.5, 5.9, 5.2, theme.offWhite);
+      addRect(6.9, 1.5, 5.9, 0.1, theme.accent);
+      // Center divider
+      addRect(6.55, 1.5, 0.2, 5.2, theme.primaryLight);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+    } else if (layout === 'timeline') {
+      // ── Timeline: Horizontal flow bar + node markers ──
+      addRect(0, 0, 0.5, 7.5, theme.primary); // Left vertical bar
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      // Horizontal timeline bar
+      addRect(1.2, 3.5, 11.5, 0.12, theme.primaryLight);
+      // Node circles (decorative dots)
+      addRect(2.5, 3.2, 0.7, 0.7, theme.primary);
+      addRect(5.5, 3.2, 0.7, 0.7, theme.primary);
+      addRect(8.5, 3.2, 0.7, 0.7, theme.primary);
+      addRect(11.5, 3.2, 0.7, 0.7, theme.accent);
+    } else if (layout === 'data_highlight') {
+      // ── Data Highlight: Narrow header + big number zone + bottom color band ──
+      addRect(0, 0, 13.33, 0.7, theme.primary);
+      addRect(0, 0.7, 13.33, 0.06, theme.accent);
+      addRect(0, 6.0, 13.33, 1.5, theme.offWhite); // Bottom highlight band
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      // Left accent vertical bar
+      addRect(0.5, 1.2, 0.08, 4.5, theme.primary);
+    } else if (layout === 'quote_slide') {
+      // ── Quote: Left wide accent bar + soft background ──
+      addRect(0, 0, 13.33, 7.5, theme.offWhite);
+      addRect(0, 0, 0.8, 7.5, theme.primary); // Wide left bar
+      addRect(0.8, 2.8, 0.12, 1.8, theme.accent); // Accent mark
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
     } else {
-      // ---- Content Slide: Full-width navy header + accent stripe ----
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0, y: 0, w: 13.33, h: theme.contentHeaderHeight,
-        fill: { color: theme.primary },
-        line: { width: 0 },
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0, y: theme.contentHeaderHeight, w: 13.33, h: 0.08,
-        fill: { color: theme.accent },
-        line: { width: 0 },
-      });
-      // Bottom thin navy bar
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0, y: 7.15, w: 13.33, h: 0.35,
-        fill: { color: theme.primary },
-        line: { width: 0 },
-      });
-      // Subtle left vertical accent line in content area
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x: 0.7, y: 1.8, w: 0.06, h: 4.8,
-        fill: { color: theme.primaryLight },
-        line: { width: 0 },
-      });
+      // ── Default content_slide: Left wide color band + right content area ──
+      addRect(0, 0, 4.5, 7.15, theme.primary); // Left wide band
+      addRect(4.5, 0, 0.08, 7.15, theme.accent); // Accent vertical divider
+      addRect(0, 7.15, 13.33, 0.35, theme.primary); // Bottom bar
     }
 
     // === STEP 2: Render AI content elements (skip all shapes) ===
@@ -311,17 +346,31 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
       switch (el.kind) {
         case 'text': {
           let textY = el.y || 0;
-          let textColor = el.color || theme.bodyColor;
-          let textFontSize = el.fontSize || 18;
+          const textFontSize = el.fontSize || 18;
+          let textColor = theme.bodyColor; // Default: use theme body color
 
-          // For content slides, push title text into the header bar
-          if (!isTitleSlide && !isEndSlide && textFontSize >= 24) {
-            textY = 0.2;
-            textColor = theme.white;
+          // Title color & position logic — varies by layout type
+          if (textFontSize >= 24) {
+            if (isTitleSlide || isEndSlide) {
+              textColor = theme.white; // Cover/End: in primary area
+            } else if (layout === 'content_slide') {
+              textColor = theme.white; // Left band: title is white
+            } else if (layout === 'card_3col' || layout === 'comparison') {
+              textY = 0.15; // Short header bar
+              textColor = theme.white;
+            } else if (layout === 'data_highlight') {
+              textY = 0.1; // Narrow header
+              textColor = theme.white;
+            } else if (layout === 'quote_slide') {
+              textColor = theme.primary; // Quote: primary color title
+            } else {
+              textY = 0.2;
+              textColor = theme.white;
+            }
           }
-          // For cover/end slides, ensure title is white (in navy area)
-          if ((isTitleSlide || isEndSlide) && textFontSize >= 24) {
-            textColor = theme.white;
+          // Large decorative text (big numbers etc): allow AI color choice
+          if (el.color && textFontSize >= 30) {
+            textColor = el.color;
           }
 
           const lines = (el.content || '').split('\n');
@@ -405,6 +454,8 @@ export default function PptPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState('');
 
+  // (inferLayout defined at module level above)
+
   // Chat State
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [messages, setMessages] = useState<Message[]>([
@@ -435,6 +486,81 @@ export default function PptPage() {
   const [selectedTone, setSelectedTone] = useState('neutral');
   const [selectedScene, setSelectedScene] = useState('general');
   const [selectedLayouts, setSelectedLayouts] = useState<string[]>(['auto']);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>('business');
+  const [leftTab, setLeftTab] = useState<'templates' | 'slides'>('templates');
+
+  // ===== PPT Template Library =====
+  const PPT_TEMPLATES = [
+    {
+      category: 'business',
+      icon: '💼',
+      label: '商务办公',
+      templates: [
+        { id: 'quarterly-report', name: '季度工作汇报', desc: '项目进展、数据分析、下季规划', prompt: '请制作一份季度工作汇报PPT，包含项目进展、关键数据指标、团队成果和下季度规划，8-10页', scene: 'report', style: 'professional' },
+        { id: 'annual-review', name: '年度总结报告', desc: '全年回顾、亮点成果、展望未来', prompt: '请制作年度总结报告PPT，包含全年核心成果、数据对比、里程碑事件和新年展望，10-12页', scene: 'report', style: 'professional' },
+        { id: 'project-proposal', name: '项目立项方案', desc: '项目背景、目标、计划、预算', prompt: '请制作项目立项方案PPT，包含项目背景、目标、实施计划、资源需求和预算，8-10页', scene: 'report', style: 'professional' },
+        { id: 'team-intro', name: '团队介绍', desc: '团队成员、职能分工、协作模式', prompt: '请制作团队介绍PPT，包含团队概况、成员介绍、职能分工和协作方式，6-8页', scene: 'general', style: 'professional' },
+        { id: 'product-roadmap', name: '产品路线图', desc: '版本规划、里程碑、时间线', prompt: '请制作产品路线图PPT，包含版本规划、功能里程碑、时间线和资源安排，8-10页', scene: 'report', style: 'professional' },
+        { id: 'meeting-summary', name: '会议纪要', desc: '议题、决议、行动项', prompt: '请制作会议纪要PPT，包含会议议题、讨论要点、决议事项和行动项，5-7页', scene: 'general', style: 'minimal' },
+      ],
+    },
+    {
+      category: 'roadshow',
+      icon: '🚀',
+      label: '路演融资',
+      templates: [
+        { id: 'startup-pitch', name: '创业融资路演', desc: '痛点、方案、市场、团队、融资', prompt: '请制作创业融资路演PPT，包含市场痛点、解决方案、商业模式、市场规模、团队介绍和融资需求，10-12页', scene: 'pitch', style: 'creative' },
+        { id: 'investor-deck', name: '投资人推介', desc: '核心数据、增长曲线、竞品分析', prompt: '请制作投资人推介PPT，重点展示核心数据、用户增长、收入模型和竞争优势，8-10页', scene: 'pitch', style: 'professional' },
+        { id: 'product-launch', name: '新品发布会', desc: '产品亮点、技术突破、市场策略', prompt: '请制作新品发布会PPT，包含产品亮点、技术突破、用户体验和市场策略，8-10页', scene: 'pitch', style: 'creative' },
+        { id: 'business-plan', name: '商业计划书', desc: '市场分析、运营策略、财务预测', prompt: '请制作商业计划书PPT，包含市场分析、运营策略、收入模型和财务预测，10-12页', scene: 'pitch', style: 'professional' },
+      ],
+    },
+    {
+      category: 'education',
+      icon: '📚',
+      label: '培训教学',
+      templates: [
+        { id: 'onboarding', name: '新员工入职培训', desc: '公司文化、制度、流程', prompt: '请制作新员工入职培训PPT，包含公司文化、组织架构、规章制度和工作流程，8-10页', scene: 'training', style: 'professional' },
+        { id: 'tech-sharing', name: '技术分享', desc: '技术方案、架构、最佳实践', prompt: '请制作技术分享PPT，包含技术背景、方案设计、架构图和最佳实践，8-10页', scene: 'training', style: 'academic' },
+        { id: 'course-lecture', name: '课程讲义', desc: '知识体系、核心概念、案例', prompt: '请制作课程讲义PPT，包含知识体系、核心概念、实例解析和总结，8-12页', scene: 'training', style: 'academic' },
+        { id: 'workshop', name: '工作坊指南', desc: '活动流程、互动环节、任务卡', prompt: '请制作工作坊指南PPT，包含活动流程、互动环节设计、小组任务和总结分享，6-8页', scene: 'training', style: 'creative' },
+        { id: 'sop-training', name: '标准操作培训', desc: '流程步骤、注意事项、示例', prompt: '请制作标准操作流程培训PPT，包含操作步骤、注意事项、常见问题和示例，6-8页', scene: 'training', style: 'minimal' },
+      ],
+    },
+    {
+      category: 'data',
+      icon: '📊',
+      label: '数据报告',
+      templates: [
+        { id: 'data-dashboard', name: '数据看板报告', desc: '关键指标、趋势分析、预警', prompt: '请制作数据看板报告PPT，包含核心指标、趋势分析、异常预警和优化建议，8-10页', scene: 'report', style: 'professional' },
+        { id: 'market-research', name: '市场调研报告', desc: '行业现状、用户画像、机会点', prompt: '请制作市场调研报告PPT，包含行业现状、用户画像分析、竞品对比和机会点，8-10页', scene: 'report', style: 'academic' },
+        { id: 'competitive-analysis', name: '竞品分析', desc: '竞品对比、差异化、策略建议', prompt: '请制作竞品分析PPT，包含竞品功能对比、差异化分析、SWOT和策略建议，6-8页', scene: 'report', style: 'professional' },
+        { id: 'user-research', name: '用户研究报告', desc: '用户反馈、行为分析、改进建议', prompt: '请制作用户研究报告PPT，包含用户反馈、行为分析、满意度数据和改进建议，8-10页', scene: 'report', style: 'academic' },
+      ],
+    },
+    {
+      category: 'creative',
+      icon: '🎨',
+      label: '创意设计',
+      templates: [
+        { id: 'brand-story', name: '品牌故事', desc: '品牌起源、价值观、愿景', prompt: '请制作品牌故事PPT，包含品牌起源、核心价值观、品牌故事和未来愿景，6-8页', scene: 'general', style: 'creative' },
+        { id: 'event-plan', name: '活动策划方案', desc: '活动主题、流程、预算', prompt: '请制作活动策划方案PPT，包含活动主题、流程安排、场地布置和预算方案，8-10页', scene: 'general', style: 'creative' },
+        { id: 'portfolio', name: '作品集展示', desc: '项目作品、设计理念、成果', prompt: '请制作作品集展示PPT，包含代表项目、设计理念、技术方案和项目成果，8-10页', scene: 'general', style: 'creative' },
+        { id: 'proposal', name: '创意提案', desc: '创意概念、视觉呈现、执行方案', prompt: '请制作创意提案PPT，包含创意概念、视觉风格、执行方案和效果预期，6-8页', scene: 'pitch', style: 'creative' },
+      ],
+    },
+    {
+      category: 'personal',
+      icon: '🌟',
+      label: '个人成长',
+      templates: [
+        { id: 'resume', name: '个人简历', desc: '教育、经历、技能、项目', prompt: '请制作个人简历PPT，包含教育背景、工作经历、技能专长和代表项目，6-8页', scene: 'general', style: 'minimal' },
+        { id: 'career-plan', name: '职业规划', desc: '现状分析、目标、发展路径', prompt: '请制作职业规划PPT，包含现状分析、职业目标、发展路径和行动计划，6-8页', scene: 'general', style: 'professional' },
+        { id: 'year-review', name: '个人年度回顾', desc: '成就、学习、新年计划', prompt: '请制作个人年度回顾PPT，包含年度成就、学习成长、旅行记录和新年计划，6-8页', scene: 'general', style: 'creative' },
+        { id: 'knowledge-map', name: '知识体系梳理', desc: '知识框架、核心要点、关联', prompt: '请制作知识体系梳理PPT，包含知识框架、核心要点、关联关系和学习建议，8-10页', scene: 'training', style: 'academic' },
+      ],
+    },
+  ];
 
   // Style Options
   const STYLE_OPTIONS = [
@@ -639,17 +765,19 @@ export default function PptPage() {
 
     // Build style hints from control panel selections
     const styleHints: string[] = [];
-    if (selectedStyle !== 'professional') styleHints.push(`风格: ${STYLE_OPTIONS.find(o => o.id === selectedStyle)?.label || selectedStyle}`);
-    if (selectedStructure !== 'auto') styleHints.push(`结构: ${STRUCTURE_OPTIONS.find(o => o.id === selectedStructure)?.label || selectedStructure}`);
-    if (selectedTone !== 'neutral') styleHints.push(`色调: ${TONE_OPTIONS.find(o => o.id === selectedTone)?.label || selectedTone}`);
-    if (selectedScene !== 'general') styleHints.push(`场景: ${SCENE_OPTIONS.find(o => o.id === selectedScene)?.label || selectedScene}`);
+    const styleLabel = STYLE_OPTIONS.find(o => o.id === selectedStyle)?.label || selectedStyle;
+    const structureLabel = STRUCTURE_OPTIONS.find(o => o.id === selectedStructure)?.label || selectedStructure;
+    const toneLabel = TONE_OPTIONS.find(o => o.id === selectedTone)?.label || selectedTone;
+    const sceneLabel = SCENE_OPTIONS.find(o => o.id === selectedScene)?.label || selectedScene;
+    styleHints.push(`风格=${styleLabel}`);
+    styleHints.push(`结构=${structureLabel}`);
+    styleHints.push(`色调=${toneLabel}`);
+    styleHints.push(`场景=${sceneLabel}`);
     if (!selectedLayouts.includes('auto') && selectedLayouts.length > 0) {
       const layoutLabels = selectedLayouts.map(id => LAYOUT_OPTIONS.find(o => o.id === id)?.label || id).join('、');
-      styleHints.push(`布局偏好: ${layoutLabels}`);
+      styleHints.push(`布局=${layoutLabels}`);
     }
-    const enrichedContent = styleHints.length > 0
-      ? `${content}\n\n[用户偏好设置: ${styleHints.join(' | ')}]`
-      : content;
+    const enrichedContent = `[设计指令: ${styleHints.join(', ')}]\n\n${content}`;
 
     if (!selectedAgentId) {
       setMessages((prev) => [
@@ -714,11 +842,8 @@ export default function PptPage() {
       };
 
       // First: try to detect PPT data in any response type
-      console.log('[PPT] Response type:', type, 'content type:', typeof resContent, 'content preview:', typeof resContent === 'string' ? resContent.slice(0, 300) : JSON.stringify(resContent).slice(0, 300));
       const detectedPpt = tryParsePpt(resContent);
-      console.log('[PPT] tryParsePpt result:', detectedPpt ? 'DETECTED' : 'null');
       if (detectedPpt) {
-        console.log('[PPT] Detected PPT data (type was:', type, ')');
         setPptData(detectedPpt);
         setCurrentSlideIndex(0);
         setSessions((prev) =>
@@ -852,30 +977,78 @@ export default function PptPage() {
     { label: '技术方案 PPT', text: '请帮我制作一份微服务架构技术方案PPT，包含架构设计、技术选型、部署方案，大约6页' },
   ];
 
-  // Render mini slide for thumbnail panel (simplified, very small)
-  const renderMiniSlide = (slideData: PptSlide, slideIdx: number) => {
-    const layout = slideData.layout || '';
+  // Helper: render layout-specific mini decorations for thumbnails
+  const renderMiniDecor = (layout: string, slideIdx: number, t: PptTheme) => {
     const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
     const isEndSlide = layout === 'end_slide' || slideIdx === (pptData?.slides.length ?? 1) - 1;
-    const t = activeTheme;
     const coverNavyPct = (t.coverNavyHeight / 7.5) * 100;
+    const hdrPct = (t.contentHeaderHeight / 7.5) * 100;
+
+    if (isTitleSlide || isEndSlide) {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: `${coverNavyPct}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0" style={{ top: `${coverNavyPct}%`, height: '2%', backgroundColor: `#${t.accent}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'card_3col') {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.9/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'5%', top:'28%', width:'27%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'37%', top:'28%', width:'27%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'69%', top:'28%', width:'27%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'comparison') {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.9/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'4%', top:'22%', width:'44%', height:'60%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'52%', top:'22%', width:'44%', height:'60%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.accent}` }} />
+        <div className="absolute" style={{ left:'49.5%', top:'22%', width:'1%', height:'60%', backgroundColor:`#${t.primaryLight}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'timeline') {
+      return <>
+        <div className="absolute" style={{ left:0, top:0, width:'4%', height:'100%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute" style={{ left:'10%', top:'46%', width:'85%', height:'2%', backgroundColor:`#${t.primaryLight}` }} />
+        <div className="absolute rounded-full" style={{ left:'16%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute rounded-full" style={{ left:'40%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute rounded-full" style={{ left:'64%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute rounded-full" style={{ left:'88%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.accent}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'data_highlight') {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.7/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '22%', backgroundColor: `#${t.offWhite}` }} />
+        <div className="absolute" style={{ left:'4%', top:'16%', width:'0.5%', height:'60%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute inset-x-0" style={{ bottom: '5%', height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'quote_slide') {
+      return <>
+        <div className="absolute inset-x-0" style={{ backgroundColor: `#${t.offWhite}`, inset:0 }} />
+        <div className="absolute" style={{ left:0, top:0, width:'6%', height:'100%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute" style={{ left:'6%', top:'37%', width:'1%', height:'24%', backgroundColor:`#${t.accent}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else {
+      // Default content_slide: Left wide band
+      return <>
+        <div className="absolute" style={{ left:0, top:0, width:'34%', height:'95%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute" style={{ left:'34%', top:0, width:'0.5%', height:'95%', backgroundColor:`#${t.accent}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    }
+  };
+
+  // Render mini slide for thumbnail panel (simplified, very small)
+  const renderMiniSlide = (slideData: PptSlide, slideIdx: number) => {
+    const layout = inferLayout(slideData, slideIdx, pptData?.slides.length ?? 1);
+    const t = activeTheme;
 
     return (
       <div className="w-full h-full relative bg-white" style={{ fontSize: '2px' }}>
-        {/* Theme decorations (mini) */}
-        {isTitleSlide || isEndSlide ? (
-          <>
-            <div className="absolute inset-x-0 top-0" style={{ height: `${coverNavyPct}%`, backgroundColor: `#${t.primary}` }} />
-            <div className="absolute inset-x-0" style={{ top: `${coverNavyPct}%`, height: '2%', backgroundColor: `#${t.accent}` }} />
-            <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
-          </>
-        ) : (
-          <>
-            <div className="absolute inset-x-0 top-0" style={{ height: `${(t.contentHeaderHeight / 7.5) * 100}%`, backgroundColor: `#${t.primary}` }} />
-            <div className="absolute inset-x-0" style={{ top: `${(t.contentHeaderHeight / 7.5) * 100}%`, height: '1.5%', backgroundColor: `#${t.accent}` }} />
-            <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
-          </>
-        )}
+        {/* Theme decorations (mini) — layout-specific */}
+        {renderMiniDecor(layout, slideIdx, t)}
         {/* Actual text content in thumbnail */}
         {slideData.elements
           .filter(el => el.kind === 'text')
@@ -911,7 +1084,7 @@ export default function PptPage() {
 
   // Render slide content elements (shared between main preview and fullscreen)
   const renderSlideContent = (slideData: PptSlide, slideIdx: number) => {
-    const layout = slideData.layout || '';
+    const layout = inferLayout(slideData, slideIdx, pptData?.slides.length ?? 1);
     const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
     const isEndSlide = layout === 'end_slide' || slideIdx === (pptData?.slides.length ?? 1) - 1;
 
@@ -929,15 +1102,38 @@ export default function PptPage() {
       const hPct = ((el.h || 1) / 7.5) * 100;
 
       if (el.kind === 'text') {
-        let textColor = el.color ? `#${el.color}` : `#${activeTheme.bodyColor}`;
-        let fontSize = Math.max(8, (el.fontSize || 18) * 0.7);
+        const fontSizeNum = el.fontSize || 18;
+        let fontSize = Math.max(8, fontSizeNum * 0.7);
+        let textColor = `#${activeTheme.bodyColor}`; // Default: use theme body color
 
-        if (!isTitleSlide && !isEndSlide && (el.fontSize || 0) >= 24) {
-          yPct = (0.2 / 7.5) * 100;
-          textColor = `#${activeTheme.titleColor}`;
+        // Title color & position logic — varies by layout type
+        if (fontSizeNum >= 24) {
+          if (isTitleSlide || isEndSlide) {
+            // Cover/End: title in primary color area, white
+            textColor = `#${activeTheme.white}`;
+          } else if (layout === 'content_slide') {
+            // Content slide with left band: title in left band (white), keep AI y position
+            textColor = `#${activeTheme.white}`;
+          } else if (layout === 'card_3col' || layout === 'comparison') {
+            // Card/Comparison: title in short header bar (white)
+            yPct = (0.15 / 7.5) * 100;
+            textColor = `#${activeTheme.white}`;
+          } else if (layout === 'data_highlight') {
+            // Data highlight: title in narrow header (white)
+            yPct = (0.1 / 7.5) * 100;
+            textColor = `#${activeTheme.white}`;
+          } else if (layout === 'quote_slide') {
+            // Quote: title uses primary color
+            textColor = `#${activeTheme.primary}`;
+          } else {
+            // Fallback: push to top
+            yPct = (0.2 / 7.5) * 100;
+            textColor = `#${activeTheme.white}`;
+          }
         }
-        if ((isTitleSlide || isEndSlide) && (el.fontSize || 0) >= 24) {
-          textColor = `#${activeTheme.titleColor}`;
+        // Large decorative text (big numbers etc): allow AI color choice
+        if (el.color && fontSizeNum >= 30) {
+          textColor = `#${el.color}`; // Large decorative text: respect AI color choice
         }
 
         return (
@@ -1041,23 +1237,73 @@ export default function PptPage() {
     );
   };
 
-  // Render theme decorations for preview (matching generatePptx exactly)
+  // Render theme decorations for preview — layout-specific skeletons
   const renderThemeDecor = (slideData: PptSlide, slideIdx: number) => {
-    const layout = slideData.layout || '';
+    const layout = inferLayout(slideData, slideIdx, pptData?.slides.length ?? 1);
     const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
     const isEndSlide = layout === 'end_slide' || slideIdx === (pptData?.slides.length ?? 1) - 1;
     const t = activeTheme;
     const elements: React.ReactNode[] = [];
 
+    const pctX = (v: number) => (v / 13.33) * 100;
+    const pctY = (v: number) => (v / 7.5) * 100;
+    const pctW = (v: number) => (v / 13.33) * 100;
+    const pctH = (v: number) => (v / 7.5) * 100;
+
     if (isTitleSlide || isEndSlide) {
-      elements.push(renderDecorDiv(0, 0, 13.33, t.coverNavyHeight, t.primary, 't-top-navy'));
-      elements.push(renderDecorDiv(0, t.coverNavyHeight, 13.33, 0.12, t.accent, 't-accent-stripe'));
+      // Cover / End
+      elements.push(renderDecorDiv(0, 0, 13.33, t.coverNavyHeight, t.primary, 't-top'));
+      elements.push(renderDecorDiv(0, t.coverNavyHeight, 13.33, 0.12, t.accent, 't-stripe'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(10.5, 0.6, 2.2, 2.2, t.primaryLight, 't-circle'));
+    } else if (layout === 'card_3col') {
+      // 3-Column Cards
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
+      elements.push(renderDecorDiv(0, 0.9, 13.33, 0.06, t.accent, 't-accent'));
+      elements.push(renderDecorDiv(0.5, 1.6, 3.8, 5.0, t.offWhite, 't-card1bg'));
+      elements.push(renderDecorDiv(4.75, 1.6, 3.8, 5.0, t.offWhite, 't-card2bg'));
+      elements.push(renderDecorDiv(9.0, 1.6, 3.8, 5.0, t.offWhite, 't-card3bg'));
+      elements.push(renderDecorDiv(0.5, 1.6, 3.8, 0.12, t.primary, 't-card1top'));
+      elements.push(renderDecorDiv(4.75, 1.6, 3.8, 0.12, t.primary, 't-card2top'));
+      elements.push(renderDecorDiv(9.0, 1.6, 3.8, 0.12, t.primary, 't-card3top'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+    } else if (layout === 'comparison') {
+      // Comparison: Left-right
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
+      elements.push(renderDecorDiv(0, 0.9, 13.33, 0.06, t.accent, 't-accent'));
+      elements.push(renderDecorDiv(0.5, 1.5, 5.9, 5.2, t.offWhite, 't-leftblock'));
+      elements.push(renderDecorDiv(0.5, 1.5, 5.9, 0.1, t.primary, 't-lefttop'));
+      elements.push(renderDecorDiv(6.9, 1.5, 5.9, 5.2, t.offWhite, 't-rightblock'));
+      elements.push(renderDecorDiv(6.9, 1.5, 5.9, 0.1, t.accent, 't-righttop'));
+      elements.push(renderDecorDiv(6.55, 1.5, 0.2, 5.2, t.primaryLight, 't-divider'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+    } else if (layout === 'timeline') {
+      // Timeline: Vertical left bar + horizontal flow + dots
+      elements.push(renderDecorDiv(0, 0, 0.5, 7.5, t.primary, 't-leftbar'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(1.2, 3.5, 11.5, 0.12, t.primaryLight, 't-line'));
+      elements.push(renderDecorDiv(2.5, 3.2, 0.7, 0.7, t.primary, 't-dot1'));
+      elements.push(renderDecorDiv(5.5, 3.2, 0.7, 0.7, t.primary, 't-dot2'));
+      elements.push(renderDecorDiv(8.5, 3.2, 0.7, 0.7, t.primary, 't-dot3'));
+      elements.push(renderDecorDiv(11.5, 3.2, 0.7, 0.7, t.accent, 't-dot4'));
+    } else if (layout === 'data_highlight') {
+      // Data Highlight: Narrow header + bottom band + left accent
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.7, t.primary, 't-header'));
+      elements.push(renderDecorDiv(0, 0.7, 13.33, 0.06, t.accent, 't-accent'));
+      elements.push(renderDecorDiv(0, 6.0, 13.33, 1.5, t.offWhite, 't-bottomband'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(0.5, 1.2, 0.08, 4.5, t.primary, 't-leftbar'));
+    } else if (layout === 'quote_slide') {
+      // Quote: Wide left bar + soft bg
+      elements.push(renderDecorDiv(0, 0, 13.33, 7.5, t.offWhite, 't-bg'));
+      elements.push(renderDecorDiv(0, 0, 0.8, 7.5, t.primary, 't-leftbar'));
+      elements.push(renderDecorDiv(0.8, 2.8, 0.12, 1.8, t.accent, 't-accent'));
       elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
     } else {
-      elements.push(renderDecorDiv(0, 0, 13.33, t.contentHeaderHeight, t.primary, 't-header'));
-      elements.push(renderDecorDiv(0, t.contentHeaderHeight, 13.33, 0.08, t.accent, 't-accent'));
+      // Default content_slide: Left wide color band + right content area
+      elements.push(renderDecorDiv(0, 0, 4.5, 7.15, t.primary, 't-leftband'));
+      elements.push(renderDecorDiv(4.5, 0, 0.08, 7.15, t.accent, 't-divider'));
       elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
-      elements.push(renderDecorDiv(0.7, 1.8, 0.06, 4.8, t.primaryLight, 't-left-line'));
     }
     return elements;
   };
@@ -1147,17 +1393,33 @@ export default function PptPage() {
       {/* ===== Main 3-Column Layout ===== */}
       <div className="flex flex-1 w-full overflow-hidden">
 
-        {/* ===== Left: Slide Thumbnails ===== */}
+        {/* ===== Left: Slide Thumbnails / Template Library ===== */}
         <aside className="w-[180px] bg-white border-r border-gray-200 flex flex-col shrink-0 z-30">
-          {/* Theme Selector */}
-          <div className="px-3 pt-3 pb-2 border-b border-gray-100">
-            <div className="text-[11px] text-gray-400 font-medium mb-2">🎨 主题风格</div>
+          {/* Tab Switcher: Templates / Slides */}
+          <div className="px-2 pt-2 pb-1 border-b border-gray-100 flex gap-1">
+            <button
+              onClick={() => setLeftTab('templates')}
+              className={`flex-1 text-[10px] font-medium py-1 rounded transition ${leftTab === 'templates' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+              📋 模板
+            </button>
+            <button
+              onClick={() => setLeftTab('slides')}
+              className={`flex-1 text-[10px] font-medium py-1 rounded transition ${leftTab === 'slides' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+              🖼️ 页面
+            </button>
+          </div>
+
+          {/* Theme Selector (always visible) */}
+          <div className="px-3 pt-2 pb-2 border-b border-gray-100">
+            <div className="text-[10px] text-gray-400 font-medium mb-1.5">🎨 主题</div>
             <div className="flex flex-wrap gap-1.5">
               {THEMES.map(t => (
                 <button
                   key={t.id}
                   onClick={() => setSelectedThemeId(t.id)}
-                  className={`w-7 h-7 rounded-full border-2 transition-all flex items-center justify-center ${
+                  className={`w-6 h-6 rounded-full border-2 transition-all flex items-center justify-center ${
                     selectedThemeId === t.id
                       ? 'border-indigo-500 scale-110 shadow-md'
                       : 'border-gray-200 hover:border-gray-400 hover:scale-105'
@@ -1165,7 +1427,7 @@ export default function PptPage() {
                   title={t.name}
                 >
                   <div
-                    className="w-5 h-5 rounded-full overflow-hidden"
+                    className="w-4 h-4 rounded-full overflow-hidden"
                     style={{
                       background: `linear-gradient(135deg, #${t.primary} 50%, #${t.accent} 50%)`,
                     }}
@@ -1173,11 +1435,51 @@ export default function PptPage() {
                 </button>
               ))}
             </div>
-            <div className="text-[10px] text-gray-500 mt-1.5 text-center">{activeTheme.name}</div>
           </div>
-          {/* Thumbnails */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin scrollbar-thumb-gray-200">
-            {pptData && pptData.slides.length > 0 ? (
+
+          {/* Content area */}
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-gray-200">
+            {leftTab === 'templates' ? (
+              /* Template Library */
+              <div className="space-y-0.5">
+                {PPT_TEMPLATES.map((cat) => (
+                  <div key={cat.category}>
+                    <button
+                      onClick={() => setExpandedCategory(expandedCategory === cat.category ? null : cat.category)}
+                      className="w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-md hover:bg-gray-50 transition text-left"
+                    >
+                      <span className="text-xs">{cat.icon}</span>
+                      <span className="text-[11px] font-medium text-gray-600 flex-1">{cat.label}</span>
+                      <span className="text-[9px] text-gray-300">{cat.templates.length}</span>
+                      <svg
+                        className={`w-3 h-3 text-gray-400 transition-transform ${expandedCategory === cat.category ? 'rotate-90' : ''}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                    {expandedCategory === cat.category && (
+                      <div className="ml-3 space-y-0.5 mb-1">
+                        {cat.templates.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            onClick={() => {
+                              setInputValue(tpl.prompt);
+                              if (tpl.style) setSelectedStyle(tpl.style);
+                              if (tpl.scene) setSelectedScene(tpl.scene);
+                            }}
+                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-indigo-50 hover:border-indigo-200 border border-transparent transition group"
+                          >
+                            <div className="text-[11px] font-medium text-gray-700 group-hover:text-indigo-700">{tpl.name}</div>
+                            <div className="text-[9px] text-gray-400 mt-0.5 leading-tight">{tpl.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : pptData && pptData.slides.length > 0 ? (
               pptData.slides.map((slide, idx) => (
                 <div
                   key={idx}
@@ -1195,12 +1497,13 @@ export default function PptPage() {
                 </div>
               ))
             ) : (
-              <div className="text-center py-10">
-                <Icons.FilePresentation className="w-10 h-10 mx-auto text-gray-300 mb-2" />
+              <div className="text-center py-8">
+                <Icons.FilePresentation className="w-8 h-8 mx-auto text-gray-200 mb-2" />
                 <p className="text-[11px] text-gray-400">暂无幻灯片</p>
-                <p className="text-[10px] text-gray-300 mt-1">在右侧输入需求生成</p>
+                <p className="text-[9px] text-gray-300 mt-1">在右侧输入需求或选择模板</p>
               </div>
-            )}
+            )
+          }
           </div>
 
           {/* Session list */}
