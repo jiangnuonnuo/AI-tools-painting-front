@@ -429,6 +429,47 @@ export default function PptPage() {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedThemeId, setSelectedThemeId] = useState('navy');
+  const [isStylePanelOpen, setIsStylePanelOpen] = useState(false);
+  const [selectedStyle, setSelectedStyle] = useState('professional');
+  const [selectedStructure, setSelectedStructure] = useState('auto');
+  const [selectedTone, setSelectedTone] = useState('neutral');
+  const [selectedScene, setSelectedScene] = useState('general');
+  const [selectedLayouts, setSelectedLayouts] = useState<string[]>(['auto']);
+
+  // Style Options
+  const STYLE_OPTIONS = [
+    { id: 'professional', label: '👔 商务' },
+    { id: 'creative', label: '🎨 创意' },
+    { id: 'academic', label: '🎓 学术' },
+    { id: 'minimal', label: '✨ 极简' },
+  ];
+  const STRUCTURE_OPTIONS = [
+    { id: 'auto', label: '🤖 自动' },
+    { id: 'title-only', label: '📋 纯标题' },
+    { id: 'full', label: '📖 完整' },
+  { id: 'concise', label: '⚡ 精简' },
+  ];
+  const TONE_OPTIONS = [
+    { id: 'neutral', label: '⚖️ 中性' },
+    { id: 'warm', label: '🔥 暖色' },
+    { id: 'cool', label: '❄️ 冷色' },
+    { id: 'vivid', label: '🌈 鲜艳' },
+  ];
+  const SCENE_OPTIONS = [
+    { id: 'general', label: '📋 通用' },
+    { id: 'report', label: '📊 汇报' },
+    { id: 'pitch', label: '🚀 路演' },
+    { id: 'training', label: '📚 培训' },
+  ];
+  const LAYOUT_OPTIONS = [
+    { id: 'auto', label: '自动', desc: 'AI自动选择布局' },
+    { id: 'title_slide', label: '标题', desc: '封面页' },
+    { id: 'content_slide', label: '内容', desc: '图文内容页' },
+    { id: 'card_3col', label: '三栏', desc: '三栏卡片' },
+    { id: 'comparison', label: '对比', desc: '左右对比' },
+    { id: 'data_highlight', label: '数据', desc: '数据突出' },
+    { id: 'timeline', label: '时间线', desc: '流程/时间线' },
+  ];
   const activeTheme = THEMES.find(t => t.id === selectedThemeId) || DEFAULT_THEME;
 
   // Session State
@@ -596,6 +637,20 @@ export default function PptPage() {
     setInputValue('');
     setIsSending(true);
 
+    // Build style hints from control panel selections
+    const styleHints: string[] = [];
+    if (selectedStyle !== 'professional') styleHints.push(`风格: ${STYLE_OPTIONS.find(o => o.id === selectedStyle)?.label || selectedStyle}`);
+    if (selectedStructure !== 'auto') styleHints.push(`结构: ${STRUCTURE_OPTIONS.find(o => o.id === selectedStructure)?.label || selectedStructure}`);
+    if (selectedTone !== 'neutral') styleHints.push(`色调: ${TONE_OPTIONS.find(o => o.id === selectedTone)?.label || selectedTone}`);
+    if (selectedScene !== 'general') styleHints.push(`场景: ${SCENE_OPTIONS.find(o => o.id === selectedScene)?.label || selectedScene}`);
+    if (!selectedLayouts.includes('auto') && selectedLayouts.length > 0) {
+      const layoutLabels = selectedLayouts.map(id => LAYOUT_OPTIONS.find(o => o.id === id)?.label || id).join('、');
+      styleHints.push(`布局偏好: ${layoutLabels}`);
+    }
+    const enrichedContent = styleHints.length > 0
+      ? `${content}\n\n[用户偏好设置: ${styleHints.join(' | ')}]`
+      : content;
+
     if (!selectedAgentId) {
       setMessages((prev) => [
         ...prev,
@@ -632,12 +687,58 @@ export default function PptPage() {
         agentId: selectedAgentId,
         userId: currentUser,
         sessionId: activeBackendSessionId,
-        message: content,
+        message: enrichedContent,
       });
 
       const { type, content: resContent } = chatRes.data;
 
-      if (type === 'user') {
+      // Helper: try to parse response as PPT data regardless of type field
+      const stripMdCodeBlock = (s: string): string => s.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+      const tryParsePpt = (raw: unknown): PptData | null => {
+        try {
+          let obj = typeof raw === 'string' ? JSON.parse(stripMdCodeBlock(raw)) : raw;
+          // Deep unwrap: handle multiple nesting levels
+          // e.g. {type:"ppt", content: "{\"type\":\"ppt\",\"content\":{...}}"} — string-in-object
+          // e.g. {type:"ppt", content: {title, slides}} — nested object
+          for (let depth = 0; depth < 5; depth++) {
+            if (obj === null || obj === undefined) return null;
+            if (obj.title && Array.isArray(obj.slides)) return obj as PptData;
+            if (Array.isArray(obj.slides) && obj.slides.length > 0) return obj as PptData;
+            // Unwrap: try obj.content, obj.data, obj.result (may be string or object)
+            const inner = obj.content ?? obj.data ?? obj.result ?? null;
+            if (inner === null) return null;
+            obj = typeof inner === 'string' ? JSON.parse(stripMdCodeBlock(inner)) : inner;
+          }
+          return null;
+        } catch { return null; }
+      };
+
+      // First: try to detect PPT data in any response type
+      console.log('[PPT] Response type:', type, 'content type:', typeof resContent, 'content preview:', typeof resContent === 'string' ? resContent.slice(0, 300) : JSON.stringify(resContent).slice(0, 300));
+      const detectedPpt = tryParsePpt(resContent);
+      console.log('[PPT] tryParsePpt result:', detectedPpt ? 'DETECTED' : 'null');
+      if (detectedPpt) {
+        console.log('[PPT] Detected PPT data (type was:', type, ')');
+        setPptData(detectedPpt);
+        setCurrentSlideIndex(0);
+        setSessions((prev) =>
+          prev.map((session) => {
+            if (session.id === currentSessionId) {
+              return { ...session, pptData: detectedPpt, lastModified: Date.now() };
+            }
+            return session;
+          })
+        );
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: 'agent',
+            content: `✅ PPT 已生成！共 ${detectedPpt.slides?.length || 0} 页，可以预览或下载。`,
+            timestamp: Date.now(),
+          },
+        ]);
+      } else if (type === 'user') {
         // AI asks for more info
         setMessages((prev) => [
           ...prev,
@@ -648,48 +749,6 @@ export default function PptPage() {
             timestamp: Date.now(),
           },
         ]);
-      } else if (type === 'ppt') {
-        // AI returns PPT data
-        try {
-          const pptResult = typeof resContent === 'string' ? JSON.parse(resContent) : resContent;
-          const parsedPptData: PptData = pptResult.title ? pptResult : pptResult.content || pptResult;
-          console.log('[PPT] Raw response:', JSON.stringify(pptResult).slice(0, 500));
-          console.log('[PPT] Parsed pptData:', JSON.stringify(parsedPptData).slice(0, 2000));
-
-          setPptData(parsedPptData);
-          setCurrentSlideIndex(0);
-
-          // Save to session
-          setSessions((prev) =>
-            prev.map((session) => {
-              if (session.id === currentSessionId) {
-                return { ...session, pptData: parsedPptData, lastModified: Date.now() };
-              }
-              return session;
-            })
-          );
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: (Date.now() + 1).toString(),
-              role: 'agent',
-              content: `✅ PPT 已生成！共 ${parsedPptData.slides?.length || 0} 页，可以预览或下载。`,
-              timestamp: Date.now(),
-            },
-          ]);
-        } catch (parseErr) {
-          console.error('Failed to parse PPT data:', parseErr);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: (Date.now() + 1).toString(),
-              role: 'agent',
-              content: `收到响应但解析 PPT 数据失败，原始内容：\n${typeof resContent === 'string' ? resContent.slice(0, 200) : '非文本数据'}`,
-              timestamp: Date.now(),
-            },
-          ]);
-        }
       } else if (type === 'drawio') {
         // Agent returned drawio type (wrong agent), inform user
         setMessages((prev) => [
@@ -1063,6 +1122,16 @@ export default function PptPage() {
             </button>
           )}
 
+          <button
+            onClick={() => setIsStylePanelOpen(prev => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+              isStylePanelOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+            title="风格设置"
+          >
+            🎛️
+          </button>
+
           <button onClick={handleLogout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="退出登录">
             <Icons.Logout className="w-4 h-4" />
           </button>
@@ -1238,104 +1307,218 @@ export default function PptPage() {
           )}
         </main>
 
-        {/* ===== Right: Chat Panel ===== */}
-        <div
-          className={`border-l border-gray-200 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${
-            isChatOpen ? 'w-[360px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'
-          } z-20 shadow-lg`}
-        >
-          {/* Chat Header */}
-          <div className="h-12 px-4 border-b border-gray-100 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm shrink-0">
-                <Icons.Sparkles className="w-4 h-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <select
-                  value={selectedAgentId}
-                  onChange={handleAgentChange}
-                  className="w-full bg-transparent text-sm font-bold text-slate-800 focus:outline-none cursor-pointer truncate appearance-none pr-4"
-                >
-                  {agents.length === 0 && <option value="">Loading...</option>}
-                  {agents.map((agent) => (
-                    <option key={agent.agentId} value={agent.agentId}>{agent.agentName}</option>
+        {/* ===== Right: Style Panel + Chat Panel ===== */}
+        <div className="flex shrink-0 z-20">
+          {/* Style Control Panel */}
+          <div
+            className={`border-l border-gray-200 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${
+              isStylePanelOpen ? 'w-[220px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'
+            }`}
+          >
+            <div className="h-12 px-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+              <span className="text-sm font-bold text-slate-800">🎛️ 风格设置</span>
+              <button onClick={() => setIsStylePanelOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition shrink-0">
+                <Icons.Close className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-5 text-sm">
+              {/* Style */}
+              <div>
+                <div className="text-xs text-gray-400 font-medium mb-2">风格</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {STYLE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSelectedStyle(opt.id)}
+                      className={`px-2 py-1.5 rounded-md text-xs transition ${
+                        selectedStyle === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
                   ))}
-                </select>
-                <div className="flex items-center gap-1 mt-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                  <span className="text-[10px] text-gray-400">PPT 助手在线</span>
+                </div>
+              </div>
+              {/* Structure */}
+              <div>
+                <div className="text-xs text-gray-400 font-medium mb-2">结构</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {STRUCTURE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSelectedStructure(opt.id)}
+                      className={`px-2 py-1.5 rounded-md text-xs transition ${
+                        selectedStructure === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Tone */}
+              <div>
+                <div className="text-xs text-gray-400 font-medium mb-2">色调</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {TONE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSelectedTone(opt.id)}
+                      className={`px-2 py-1.5 rounded-md text-xs transition ${
+                        selectedTone === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Scene */}
+              <div>
+                <div className="text-xs text-gray-400 font-medium mb-2">场景</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {SCENE_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSelectedScene(opt.id)}
+                      className={`px-2 py-1.5 rounded-md text-xs transition ${
+                        selectedScene === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Layout Preference */}
+              <div>
+                <div className="text-xs text-gray-400 font-medium mb-2">布局偏好</div>
+                <div className="space-y-1">
+                  {LAYOUT_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => {
+                        if (opt.id === 'auto') {
+                          setSelectedLayouts(['auto']);
+                        } else {
+                          setSelectedLayouts(prev => {
+                            const without = prev.filter(x => x !== 'auto');
+                            return without.includes(opt.id) ? without.filter(x => x !== opt.id) : [...without, opt.id];
+                          });
+                        }
+                      }}
+                      className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition flex items-center justify-between ${
+                        selectedLayouts.includes(opt.id) ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      <span className="text-[10px] text-gray-400">{opt.desc}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
-            <button onClick={() => setIsChatOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition shrink-0">
-              <Icons.Close className="w-5 h-5" />
-            </button>
           </div>
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 scrollbar-thin scrollbar-thumb-gray-200">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center shadow-sm ${
-                  msg.role === 'user' ? 'bg-indigo-100 text-indigo-600' : 'bg-white text-indigo-500 border border-gray-100'
-                }`}>
-                  {msg.role === 'user' ? <Icons.User className="w-4 h-4" /> : <Icons.Bot className="w-4 h-4" />}
+          {/* Chat Panel */}
+          <div
+            className={`border-l border-gray-200 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${
+              isChatOpen ? 'w-[360px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'
+            } shadow-lg`}
+          >
+            {/* Chat Header */}
+            <div className="h-12 px-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm shrink-0">
+                  <Icons.Sparkles className="w-4 h-4" />
                 </div>
-                <div className="flex flex-col max-w-[85%]">
-                  <div className={`p-3 text-sm leading-relaxed whitespace-pre-wrap rounded-xl shadow-sm ${
-                    msg.role === 'user'
-                      ? 'bg-indigo-600 text-white rounded-tr-sm'
-                      : 'bg-white border border-gray-200 text-gray-700 rounded-tl-sm'
-                  }`}>
-                    {msg.content}
+                <div className="flex-1 min-w-0">
+                  <select
+                    value={selectedAgentId}
+                    onChange={handleAgentChange}
+                    className="w-full bg-transparent text-sm font-bold text-slate-800 focus:outline-none cursor-pointer truncate appearance-none pr-4"
+                  >
+                    {agents.length === 0 && <option value="">Loading...</option>}
+                    {agents.map((agent) => (
+                      <option key={agent.agentId} value={agent.agentId}>{agent.agentName}</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                    <span className="text-[10px] text-gray-400">PPT 助手在线</span>
                   </div>
                 </div>
               </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input */}
-          <div className="p-3 bg-white border-t border-gray-100 shrink-0">
-            {messages.length <= 1 && (
-              <div className="flex flex-wrap gap-2 mb-2.5">
-                {quickActions.map((action, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setInputValue(action.text)}
-                    className="text-xs px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 transition border border-indigo-100 font-medium"
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50 transition-all">
-              <textarea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={isSending ? 'AI 正在生成...' : '描述你想制作的 PPT...'}
-                disabled={isSending}
-                className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-gray-800 placeholder:text-gray-400 resize-none max-h-32 min-h-[44px] scrollbar-thin scrollbar-thumb-gray-200"
-                rows={1}
-                style={{ height: 'auto', minHeight: '44px' }}
-              />
-              <button
-                onClick={handleSendMessage}
-                disabled={!inputValue.trim() || isSending}
-                className={`p-2 rounded-lg transition-all flex items-center justify-center ${
-                  inputValue.trim() && !isSending
-                    ? 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 active:scale-95'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                {isSending ? <Icons.Loader className="w-4 h-4" /> : <Icons.Send className="w-4 h-4" />}
+              <button onClick={() => setIsChatOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition shrink-0">
+                <Icons.Close className="w-5 h-5" />
               </button>
             </div>
-            <p className="text-center mt-2 text-[10px] text-gray-400">
-              {isSending ? 'AI 正在生成 PPT...' : '⌘/Ctrl + Enter 发送'}
-            </p>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 scrollbar-thin scrollbar-thumb-gray-200">
+              {messages.map((msg) => (
+                <div key={msg.id} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center shadow-sm ${
+                    msg.role === 'user' ? 'bg-indigo-100 text-indigo-600' : 'bg-white text-indigo-500 border border-gray-100'
+                  }`}>
+                    {msg.role === 'user' ? <Icons.User className="w-4 h-4" /> : <Icons.Bot className="w-4 h-4" />}
+                  </div>
+                  <div className="flex flex-col max-w-[85%]">
+                    <div className={`p-3 text-sm leading-relaxed whitespace-pre-wrap rounded-xl shadow-sm ${
+                      msg.role === 'user'
+                        ? 'bg-indigo-600 text-white rounded-tr-sm'
+                        : 'bg-white border border-gray-200 text-gray-700 rounded-tl-sm'
+                    }`}>
+                      {msg.content}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="p-3 bg-white border-t border-gray-100 shrink-0">
+              {messages.length <= 1 && (
+                <div className="flex flex-wrap gap-2 mb-2.5">
+                  {quickActions.map((action, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setInputValue(action.text)}
+                      className="text-xs px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 transition border border-indigo-100 font-medium"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-end gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50 transition-all">
+                <textarea
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={isSending ? 'AI 正在生成...' : '描述你想制作的 PPT...'}
+                  disabled={isSending}
+                  className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-gray-800 placeholder:text-gray-400 resize-none max-h-32 min-h-[44px] scrollbar-thin scrollbar-thumb-gray-200"
+                  rows={1}
+                  style={{ height: 'auto', minHeight: '44px' }}
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!inputValue.trim() || isSending}
+                  className={`p-2 rounded-lg transition-all flex items-center justify-center ${
+                    inputValue.trim() && !isSending
+                      ? 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 active:scale-95'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  {isSending ? <Icons.Loader className="w-4 h-4" /> : <Icons.Send className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-center mt-2 text-[10px] text-gray-400">
+                {isSending ? 'AI 正在生成 PPT...' : '⌘/Ctrl + Enter 发送'}
+              </p>
+            </div>
           </div>
         </div>
       </div>
