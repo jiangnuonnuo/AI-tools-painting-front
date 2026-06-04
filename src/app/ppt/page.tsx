@@ -17,7 +17,7 @@ type Message = {
 
 // PPT Slide data structure from AI Agent
 interface PptSlideElement {
-  kind: 'text' | 'table' | 'shape' | 'image';
+  kind: 'text' | 'table' | 'shape' | 'image' | 'icon' | 'divider' | 'bullet';
   content: string;
   x: number;
   y: number;
@@ -29,6 +29,23 @@ interface PptSlideElement {
   fill?: string;
   align?: 'left' | 'center' | 'right';
   rows?: string[][];
+  // Icon support: emoji or icon name
+  icon?: string;
+  // Decorative element options
+  radius?: number;
+  shadow?: boolean;
+  opacity?: number;
+  gradient?: string;  // e.g. 'primary' → resolved to theme gradient
+  // Line/divider options
+  thickness?: number; // line thickness in inches (for divider)
+  // Bullet number
+  number?: number;
+  // Font family override
+  fontFace?: string;
+  // Line spacing
+  lineSpacing?: number;
+  // Letter spacing
+  letterSpacing?: number;
 }
 
 interface PptSlide {
@@ -275,110 +292,109 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
     const isEndSlide = layout === 'end_slide' || slideIdx === data.slides.length - 1;
 
     // === STEP 1: Layout-specific theme decoration ===
-    // Helper: add rectangle shape
-    const addRect = (x: number, y: number, w: number, h: number, color: string) => {
+    // Helper: add rectangle shape (with optional gradient)
+    const addRect = (x: number, y: number, w: number, h: number, color: string, gradient?: { from: string; to: string }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.RECTANGLE, {
-        x, y, w, h, fill: { color }, line: { width: 0 },
-      });
+      if (gradient) {
+        slide.addShape((pres as any).shapes.RECTANGLE, {
+          x, y, w, h,
+          fill: { color: gradient.from },
+          line: { width: 0 },
+        });
+        // Overlay with semi-transparent gradient effect using second shape
+        slide.addShape((pres as any).shapes.RECTANGLE, {
+          x, y, w, h,
+          fill: { color: gradient.to, transparency: 50 },
+          line: { width: 0 },
+        });
+      } else {
+        slide.addShape((pres as any).shapes.RECTANGLE, {
+          x, y, w, h, fill: { color }, line: { width: 0 },
+        });
+      }
     };
     // Helper: add circle shape
-    const addCircle = (x: number, y: number, w: number, h: number, color: string) => {
+    const addCircle = (x: number, y: number, w: number, h: number, color: string, transparency = 0) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       slide.addShape((pres as any).shapes.OVAL, {
-        x, y, w, h, fill: { color }, line: { width: 0 },
+        x, y, w, h, fill: { color, transparency }, line: { width: 0 },
       });
     };
 
+    // Gradient shortcut
+    const grad = { from: theme.primary, to: theme.primaryMid };
+
     if (layout === 'title_classic' || layout === 'end_slide') {
-      // ── Cover / End Classic: Full-width primary top + accent stripe + bottom bar ──
-      addRect(0, 0, 13.33, theme.coverNavyHeight, theme.primary);
+      addRect(0, 0, 13.33, theme.coverNavyHeight, theme.primary, grad);
       addRect(0, theme.coverNavyHeight, 13.33, 0.12, theme.accent);
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
-      // Decorative: large circle watermark
-      addCircle(10.5, 0.6, 2.2, 2.2, theme.primaryLight);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
+      addCircle(10.5, 0.6, 2.2, 2.2, theme.primaryLight, 70);
+      addCircle(0.3, 4.8, 1.4, 1.4, theme.primaryLight, 85);
     } else if (layout === 'title_center') {
-      // ── Cover Center: Clean borders + central circle watermark ──
-      addRect(0, 0, 13.33, 0.25, theme.primary);
-      addRect(0, 7.25, 13.33, 0.25, theme.primary);
+      addRect(0, 0, 13.33, 0.25, theme.primary, grad);
+      addRect(0, 7.25, 13.33, 0.25, theme.primary, grad);
       addRect(0, 0.25, 13.33, 0.05, theme.accent);
       addRect(0, 7.2, 13.33, 0.05, theme.accent);
-      addCircle(5.16, 2.25, 3.0, 3.0, theme.offWhite);
+      addCircle(5.16, 2.25, 3.0, 3.0, theme.offWhite, 60);
     } else if (layout === 'title_split') {
-      // ── Cover Split: 50/50 Left Right ──
-      addRect(0, 0, 6.66, 7.5, theme.primary);
+      addRect(0, 0, 6.66, 7.5, theme.primary, grad);
       addRect(6.66, 0, 6.67, 7.5, theme.offWhite);
       addRect(6.66, 0, 0.1, 7.5, theme.accent);
+      addCircle(1.0, 5.0, 1.8, 1.8, theme.primaryLight, 80);
     } else if (layout === 'card_3col') {
-      // ── 3-Column Cards: Short header + 3 card background blocks ──
-      addRect(0, 0, 13.33, 0.9, theme.primary);
+      addRect(0, 0, 13.33, 0.9, theme.primary, grad);
       addRect(0, 0.9, 13.33, 0.06, theme.accent);
-      // Three card backgrounds
       addRect(0.5, 1.6, 3.8, 5.0, theme.offWhite);
       addRect(4.75, 1.6, 3.8, 5.0, theme.offWhite);
       addRect(9.0, 1.6, 3.8, 5.0, theme.offWhite);
-      // Card top accent bars
-      addRect(0.5, 1.6, 3.8, 0.12, theme.primary);
-      addRect(4.75, 1.6, 3.8, 0.12, theme.primary);
-      addRect(9.0, 1.6, 3.8, 0.12, theme.primary);
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      addRect(0.5, 1.6, 3.8, 0.12, theme.primary, grad);
+      addRect(4.75, 1.6, 3.8, 0.12, theme.primary, grad);
+      addRect(9.0, 1.6, 3.8, 0.12, theme.primary, grad);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
     } else if (layout === 'comparison') {
-      // ── Comparison: Left-right symmetric color blocks ──
-      addRect(0, 0, 13.33, 0.9, theme.primary);
+      addRect(0, 0, 13.33, 0.9, theme.primary, grad);
       addRect(0, 0.9, 13.33, 0.06, theme.accent);
-      // Left block
       addRect(0.5, 1.5, 5.9, 5.2, theme.offWhite);
-      addRect(0.5, 1.5, 5.9, 0.1, theme.primary);
-      // Right block
+      addRect(0.5, 1.5, 5.9, 0.1, theme.primary, grad);
       addRect(6.9, 1.5, 5.9, 5.2, theme.offWhite);
       addRect(6.9, 1.5, 5.9, 0.1, theme.accent);
-      // Center divider
-      addRect(6.55, 1.5, 0.2, 5.2, theme.primaryLight);
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      addRect(6.55, 1.5, 0.2, 5.2, theme.primaryLight, { from: theme.primaryLight, to: theme.primaryMid });
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
     } else if (layout === 'timeline') {
-      // ── Timeline: Horizontal flow bar + node markers ──
-      addRect(0, 0, 0.5, 7.5, theme.primary); // Left vertical bar
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
-      // Horizontal timeline bar
+      addRect(0, 0, 0.5, 7.5, theme.primary, grad);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
       addRect(1.2, 3.5, 11.5, 0.12, theme.primaryLight);
-      // Node circles (decorative dots)
-      addRect(2.5, 3.2, 0.7, 0.7, theme.primary);
-      addRect(5.5, 3.2, 0.7, 0.7, theme.primary);
-      addRect(8.5, 3.2, 0.7, 0.7, theme.primary);
-      addRect(11.5, 3.2, 0.7, 0.7, theme.accent);
+      addCircle(2.5, 3.2, 0.7, 0.7, theme.primary);
+      addCircle(5.5, 3.2, 0.7, 0.7, theme.primary);
+      addCircle(8.5, 3.2, 0.7, 0.7, theme.primary);
+      addCircle(11.5, 3.2, 0.7, 0.7, theme.accent);
     } else if (layout === 'data_highlight') {
-      // ── Data Highlight: Narrow header + big number zone + bottom color band ──
-      addRect(0, 0, 13.33, 0.7, theme.primary);
+      addRect(0, 0, 13.33, 0.7, theme.primary, grad);
       addRect(0, 0.7, 13.33, 0.06, theme.accent);
-      addRect(0, 6.0, 13.33, 1.5, theme.offWhite); // Bottom highlight band
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
-      // Left accent vertical bar
+      addRect(0, 6.0, 13.33, 1.5, theme.offWhite);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
       addRect(0.5, 1.2, 0.08, 4.5, theme.primary);
     } else if (layout === 'quote_slide') {
-      // ── Quote: Left wide accent bar + soft background ──
       addRect(0, 0, 13.33, 7.5, theme.offWhite);
-      addRect(0, 0, 0.8, 7.5, theme.primary); // Wide left bar
-      addRect(0.8, 2.8, 0.12, 1.8, theme.accent); // Accent mark
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      addRect(0, 0, 0.8, 7.5, theme.primary, grad);
+      addRect(0.8, 2.8, 0.12, 1.8, theme.accent);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
     } else if (layout === 'card_2col') {
-      // ── 2-Column Cards ──
-      addRect(0, 0, 13.33, 0.9, theme.primary);
+      addRect(0, 0, 13.33, 0.9, theme.primary, grad);
       addRect(0, 0.9, 13.33, 0.06, theme.accent);
       addRect(1.0, 1.6, 5.0, 5.0, theme.offWhite);
       addRect(7.33, 1.6, 5.0, 5.0, theme.offWhite);
-      addRect(1.0, 1.6, 5.0, 0.15, theme.primary);
-      addRect(7.33, 1.6, 5.0, 0.15, theme.primary);
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      addRect(1.0, 1.6, 5.0, 0.15, theme.primary, grad);
+      addRect(7.33, 1.6, 5.0, 0.15, theme.primary, grad);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
     } else if (layout === 'content_top') {
-      // ── Content Top Bar: Clean top header ──
-      addRect(0, 0, 13.33, 1.2, theme.primary);
+      addRect(0, 0, 13.33, 1.2, theme.primary, grad);
       addRect(0, 1.2, 13.33, 0.08, theme.accent);
-      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
     } else {
-      // ── Default content_classic: Left wide color band + right content area ──
-      addRect(0, 0, 4.5, 7.15, theme.primary); // Left wide band
-      addRect(4.5, 0, 0.08, 7.15, theme.accent); // Accent vertical divider
-      addRect(0, 7.15, 13.33, 0.35, theme.primary); // Bottom bar
+      addRect(0, 0, 4.5, 7.15, theme.primary, grad);
+      addRect(4.5, 0, 0.08, 7.15, theme.accent);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary, grad);
     }
 
     // === STEP 2: Render AI content elements (skip all shapes) ===
@@ -504,6 +520,58 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
             slide.addImage({ path: el.content, x: el.x, y: el.y, w: el.w, h: el.h });
           } catch { /* skip */ }
           break;
+
+        case 'icon': {
+          // Render emoji/icon as text in pptx
+          const iconFontSize = el.fontSize || 32;
+          slide.addText(el.icon || el.content || '●', {
+            x: el.x, y: el.y, w: el.w, h: el.h,
+            fontSize: iconFontSize,
+            color: el.color || theme.primary,
+            align: 'center',
+            valign: 'middle',
+          });
+          break;
+        }
+
+        case 'divider': {
+          // Render divider as a thin rectangle
+          const isH = (el.w || 0) > (el.h || 0);
+          if (isH) {
+            addRect(el.x || 0, el.y || 0, el.w || 1, el.thickness || 0.04, el.color || 'AAAAAA');
+          } else {
+            addRect(el.x || 0, el.y || 0, el.thickness || 0.04, el.h || 1, el.color || 'AAAAAA');
+          }
+          break;
+        }
+
+        case 'bullet': {
+          // Render bullet: number circle + text
+          const bulletFontSize = el.fontSize || 16;
+          const numSize = Math.max(10, bulletFontSize * 0.65);
+          // Number circle as a small colored shape + white number text
+          const circleW = 0.45;
+          addCircle(el.x || 0, el.y || 0, circleW, circleW, el.fill || theme.primary);
+          slide.addText(String(el.number ?? 1), {
+            x: el.x || 0, y: el.y || 0, w: circleW, h: circleW,
+            fontSize: numSize,
+            color: theme.white,
+            bold: true,
+            align: 'center',
+            valign: 'middle',
+          });
+          // Text content next to the circle
+          slide.addText(el.content || '', {
+            x: (el.x || 0) + circleW + 0.15, y: el.y || 0, w: (el.w || 5) - circleW - 0.15, h: el.h || 0.6,
+            fontSize: bulletFontSize,
+            color: el.color || theme.bodyColor,
+            bold: el.bold || false,
+            align: 'left',
+            valign: 'middle',
+            lineSpacingMultiple: 1.4,
+          });
+          break;
+        }
       }
     });
 
@@ -565,12 +633,10 @@ export default function PptPage() {
       icon: '💼',
       label: '商务办公',
       templates: [
-        { id: 'quarterly-report', name: '季度工作汇报', desc: '项目进展、数据分析、下季规划', prompt: '请制作一份季度工作汇报PPT，包含项目进展、关键数据指标、团队成果和下季度规划，8-10页', scene: 'report', style: 'professional' },
-        { id: 'annual-review', name: '年度总结报告', desc: '全年回顾、亮点成果、展望未来', prompt: '请制作年度总结报告PPT，包含全年核心成果、数据对比、里程碑事件和新年展望，10-12页', scene: 'report', style: 'professional' },
-        { id: 'project-proposal', name: '项目立项方案', desc: '项目背景、目标、计划、预算', prompt: '请制作项目立项方案PPT，包含项目背景、目标、实施计划、资源需求和预算，8-10页', scene: 'report', style: 'professional' },
-        { id: 'team-intro', name: '团队介绍', desc: '团队成员、职能分工、协作模式', prompt: '请制作团队介绍PPT，包含团队概况、成员介绍、职能分工和协作方式，6-8页', scene: 'general', style: 'professional' },
-        { id: 'product-roadmap', name: '产品路线图', desc: '版本规划、里程碑、时间线', prompt: '请制作产品路线图PPT，包含版本规划、功能里程碑、时间线和资源安排，8-10页', scene: 'report', style: 'professional' },
-        { id: 'meeting-summary', name: '会议纪要', desc: '议题、决议、行动项', prompt: '请制作会议纪要PPT，包含会议议题、讨论要点、决议事项和行动项，5-7页', scene: 'general', style: 'minimal' },
+        { id: 'quarterly-report', name: '季度工作汇报', desc: '项目进展、数据分析、下季规划', prompt: '请制作一份2026年Q2季度工作汇报PPT，共9页。\n\n第1页 封面：标题「2026年Q2季度工作汇报」，副标题「技术研发部」，右下角演讲者姓名和日期。\n第2页 本季概览：用3个数据高亮展示核心指标——「项目完成率 92%」「线上事故 0次」「团队满意度 4.8/5」。\n第3页 项目进展：用bullet列表展示4个重点项目——①用户中心重构（已完成80%，预计7月上线）②支付系统升级（已完成，交易成功率99.9%）③数据中台建设（进行中，完成数据采集层）④移动端性能优化（启动速度提升40%）。\n第4页 技术亮点：左右对比布局，左侧「架构优化」列出微服务拆分、缓存策略、CDN加速3个要点，右侧「工程效能」列出CI/CD流水线、自动化测试覆盖率85%、代码审查机制3个要点。\n第5页 数据回顾：用表格展示Q1与Q2核心指标对比（响应时间、可用性、日活、转化率），Q2数据用绿色高亮。\n第6页 团队成果：三列卡片，分别展示「技术突破」（3项专利申请）、「团队成长」（2人晋升、3人入职）、「开源贡献」（5个开源项目贡献）。\n第7页 问题与挑战：用bullet列出3个挑战——①历史技术债积压 ②跨团队协作效率待提升 ③监控体系不够完善，每个挑战后附一句话解决思路。\n第8页 下季规划：时间轴布局，7月完成用户中心上线、8月启动推荐系统、9月完成监控体系2.0。\n第9页 结尾页：感谢语+联系方式。', scene: 'report', style: 'professional' },
+        { id: 'annual-review', name: '年度总结报告', desc: '全年回顾、亮点成果、展望未来', prompt: '请制作一份2026年度工作总结报告PPT，共10页。\n\n第1页 封面：「2026年度总结报告」，副标题「产品研发中心」，日期2026年12月。\n第2页 年度关键词：用3个大数字展示——「32个项目交付」「98.5%系统可用性」「150+团队成员」。\n第3页 里程碑时间轴：按季度展示4个里程碑——Q1产品2.0上线、Q2海外市场开拓、Q3AI功能发布、Q4用户突破1000万。\n第4页 核心业务成果：三列卡片——「产品侧」3个核心功能上线、「技术侧」架构升级与性能优化、「运营侧」用户增长与留存提升。\n第5页 技术架构演进：左右对比，左侧「年初架构」单体+MySQL，右侧「年末架构」微服务+云原生，中间用对比布局突出变化。\n第6页 数据看板：用表格展示全年12个月核心指标趋势（DAU、收入、NPS、故障数）。\n第7页 团队建设：三列卡片——「人才发展」培训体系+晋升通道、「文化凝聚」团建活动+价值观、「组织效能」OKR+复盘机制。\n第8页 挑战与反思：bullet列出3个反思——①过度设计导致部分项目延期 ②技术选型需更谨慎 ③跨部门沟通仍需加强。\n第9页 2027展望：3个战略方向——①AI原生产品化 ②全球化技术架构 ③开发者生态建设。\n第10页 结尾：感谢+座右铭。', scene: 'report', style: 'professional' },
+        { id: 'project-proposal', name: '项目立项方案', desc: '项目背景、目标、计划、预算', prompt: '请制作一份智能客服系统项目立项方案PPT，共9页。\n\n第1页 封面：「智能客服系统项目立项方案」，副标题「产品技术部」，日期。\n第2页 项目背景：左侧色带放标题「为什么做」，右侧用bullet列出——①当前人工客服成本占运营支出35% ②平均响应时间8分钟，用户满意度仅72% ③竞品已上线AI客服，我们落后2个季度。\n第3页 项目目标：3个数据高亮——「响应时间 <30秒」「人工成本降低50%」「用户满意度提升至90%」。\n第4页 方案设计：三列卡片——「对话引擎」基于大模型的意图识别+多轮对话，「知识库」产品FAQ+工单历史自动学习，「人工兜底」复杂问题无缝转人工。\n第5页 技术架构：左右对比，左侧「前端」Web+App+小程序多端接入，右侧「后端」LLM服务+向量检索+规则引擎三层架构。\n第6页 实施计划：时间轴——第1月需求确认+技术选型、第2-3月核心开发、第4月内部测试、第5月灰度发布、第6月全量上线。\n第7页 资源需求：表格展示人员配置（2前端+3后端+1算法+1产品+1测试）、硬件资源（GPU服务器2台）、外部依赖（LLM API费用）。\n第8页 风险评估：bullet列出3个风险及应对——①大模型幻觉风险→人工兜底+审核机制 ②数据隐私风险→本地化部署+脱敏 ③用户接受度风险→渐进式上线+反馈收集。\n第9页 结尾：项目slogan+联系方式。', scene: 'report', style: 'professional' },
+        { id: 'team-intro', name: '团队介绍', desc: '团队成员、职能分工、协作模式', prompt: '请制作一份技术研发团队介绍PPT，共7页。\n\n第1页 封面：「技术研发团队介绍」，副标题「创新驱动·技术赋能」，团队Logo区域。\n第2页 团队概览：3个数据高亮——「50+工程师」「8个技术方向」「3地协作办公」。\n第3页 组织架构：三列卡片——「平台工程组」负责基础架构和DevOps、「业务研发组」负责核心产品开发、「算法团队」负责AI和推荐系统。\n第4页 核心能力：用bullet列出4个能力——①云原生架构设计与实施 ②高并发系统性能优化 ③大模型应用开发 ④全栈工程能力（前端+后端+移动端）。\n第5页 协作方式：左右对比——左侧「敏捷开发」2周迭代+每日站会+迭代演示，右侧「质量保障」代码审查+自动化测试+持续部署。\n第6页 技术成果：三列卡片展示年度亮点——「开源贡献」5个开源项目+2000+ GitHub Stars、「技术专利」12项发明专利、「技术分享」40+场内部分享+10+场外部演讲。\n第7页 结尾：团队slogan+招聘邮箱。', scene: 'general', style: 'professional' },
       ],
     },
     {
@@ -578,10 +644,8 @@ export default function PptPage() {
       icon: '🚀',
       label: '路演融资',
       templates: [
-        { id: 'startup-pitch', name: '创业融资路演', desc: '痛点、方案、市场、团队、融资', prompt: '请制作创业融资路演PPT，包含市场痛点、解决方案、商业模式、市场规模、团队介绍和融资需求，10-12页', scene: 'pitch', style: 'creative' },
-        { id: 'investor-deck', name: '投资人推介', desc: '核心数据、增长曲线、竞品分析', prompt: '请制作投资人推介PPT，重点展示核心数据、用户增长、收入模型和竞争优势，8-10页', scene: 'pitch', style: 'professional' },
-        { id: 'product-launch', name: '新品发布会', desc: '产品亮点、技术突破、市场策略', prompt: '请制作新品发布会PPT，包含产品亮点、技术突破、用户体验和市场策略，8-10页', scene: 'pitch', style: 'creative' },
-        { id: 'business-plan', name: '商业计划书', desc: '市场分析、运营策略、财务预测', prompt: '请制作商业计划书PPT，包含市场分析、运营策略、收入模型和财务预测，10-12页', scene: 'pitch', style: 'professional' },
+        { id: 'startup-pitch', name: '创业融资路演', desc: '痛点、方案、市场、团队、融资', prompt: '请制作一份AI+教育赛道创业融资路演PPT，共11页。\n\n第1页 封面：「智学AI——让每个孩子都有专属AI老师」，公司名+Logo区+融资轮次（Pre-A轮）。\n第2页 痛点洞察：三列卡片——「教育资源不均」一线城市与三四线师资差距3倍、「学习效率低」传统一对一每小时300元、「个性化缺失」千人一面无法因材施教。\n第3页 解决方案：左右对比布局——左侧「传统方式」固定课程+统一进度+被动学习，右侧「智学AI」自适应学习路径+实时反馈+主动探索，中间用divider和VS标识。\n第4页 产品展示：用bullet列出3个核心功能——①AI学情诊断：5分钟精准定位知识薄弱点 ②自适应练习：基于能力动态调整题目难度 ③AI答疑助手：24小时个性化答疑，解题思路而非答案。\n第5页 商业模式：三列卡片——「B2C」个人订阅￥99/月、「B2B」学校合作￥5万/年/校、「B2G」教育局采购区域授权。\n第6页 市场规模：3个数据高亮——「TAM 6000亿」中国K12教育市场、「SAM 1200亿」在线教育细分、「SOM 50亿」AI+教育可触达市场。\n第7页 增长数据：数据高亮页——「注册用户 50万+」「月活增长 180%」「续费率 78%」「NPS 72」。\n第8页 竞争优势：左右对比我方vs竞品——我方「自适应算法领先」「全学科覆盖」「公立校渠道」，竞品「题库驱动」「单科突破」「纯线上C端」。\n第9页 团队介绍：三列卡片——「创始人」前字节跳动AI Lab负责人，清华CS博士、「CTO」前好未来技术总监，10年教育科技经验、「教研负责人」省特级教师，20年一线教学经验。\n第10页 融资计划：bullet列出——融资金额2000万元、估值1亿元、资金用途（40%研发、30%市场、20%团队、10%运营）、18个月跑道。\n第11页 结尾：公司愿景「让AI成为每个孩子的专属老师」+联系方式。', scene: 'pitch', style: 'creative' },
+        { id: 'investor-deck', name: '投资人推介', desc: '核心数据、增长曲线、竞品分析', prompt: '请制作一份面向投资人的数据驱动型推介PPT，共9页。\n\n第1页 封面：「数据驱动的增长故事」，公司名+核心Slogan。\n第2页 核心指标：4个数据高亮——「ARR ¥8000万」「YoY增长 156%」「净收入留存 125%」「LTV/CAC 4.2x」。\n第3页 增长飞轮：三列卡片展示——「更多用户」→数据积累→「更好产品」→口碑传播→循环加速。\n第4页 收入模型：用表格展示3条产品线收入（基础版/专业版/企业版）的定价、用户数、收入占比。\n第5页 单位经济：数据高亮——「CAC ¥1200」「LTV ¥5100」「回本周期 8个月」「毛利率 78%」。\n第6页 市场定位：左右对比——左侧「我们」产品驱动增长+自助式上手+高净留存，右侧「竞品」销售驱动+重实施+低留存。\n第7页 增长策略：bullet列出3个增长引擎——①产品自增长：免费版→付费版转化漏斗优化 ②渠道拓展：行业解决方案+ISV生态 ③国际化：东南亚市场先发优势。\n第8页 未来预测：表格展示未来3年财务预测（收入、毛利率、用户数、市场份额）。\n第9页 结尾：融资需求摘要+联系方式。', scene: 'pitch', style: 'professional' },
       ],
     },
     {
@@ -589,11 +653,8 @@ export default function PptPage() {
       icon: '📚',
       label: '培训教学',
       templates: [
-        { id: 'onboarding', name: '新员工入职培训', desc: '公司文化、制度、流程', prompt: '请制作新员工入职培训PPT，包含公司文化、组织架构、规章制度和工作流程，8-10页', scene: 'training', style: 'professional' },
-        { id: 'tech-sharing', name: '技术分享', desc: '技术方案、架构、最佳实践', prompt: '请制作技术分享PPT，包含技术背景、方案设计、架构图和最佳实践，8-10页', scene: 'training', style: 'academic' },
-        { id: 'course-lecture', name: '课程讲义', desc: '知识体系、核心概念、案例', prompt: '请制作课程讲义PPT，包含知识体系、核心概念、实例解析和总结，8-12页', scene: 'training', style: 'academic' },
-        { id: 'workshop', name: '工作坊指南', desc: '活动流程、互动环节、任务卡', prompt: '请制作工作坊指南PPT，包含活动流程、互动环节设计、小组任务和总结分享，6-8页', scene: 'training', style: 'creative' },
-        { id: 'sop-training', name: '标准操作培训', desc: '流程步骤、注意事项、示例', prompt: '请制作标准操作流程培训PPT，包含操作步骤、注意事项、常见问题和示例，6-8页', scene: 'training', style: 'minimal' },
+        { id: 'tech-sharing', name: '技术分享', desc: '技术方案、架构、最佳实践', prompt: '请制作一份微服务架构演进技术分享PPT，共10页。\n\n第1页 封面：「从单体到微服务——架构演进实战分享」，演讲者姓名+职位+日期。\n第2页 目录：用bullet列出4个章节——①为什么需要微服务 ②架构演进路径 ③踩过的坑与经验 ④未来展望。\n第3页 背景：左侧色带标题「业务痛点」，右侧bullet列出——①代码仓库10万+行，编译需15分钟 ②一个模块故障全站挂 ③团队8人同时改代码冲突频繁 ④新功能上线周期2周+。\n第4页 演进路径：时间轴——Phase1服务拆分（按业务域拆4个服务）→Phase2基础设施（注册中心+配置中心+网关）→Phase3可观测性（链路追踪+指标监控+日志聚合）→Phase4云原生（容器化+K8s+自动扩缩容）。\n第5页 服务拆分策略：左右对比——左侧「按技术层拆」（❌反面教材）导致分布式单体，右侧「按业务域拆」（✅正确做法）用户域/订单域/支付域/商品域各自独立。\n第6页 核心组件：三列卡片——🔧「服务注册与发现」Nacos+健康检查+负载均衡，⚡「API网关」统一入口+鉴权+限流+熔断，📊「可观测性」SkyWalking+Prometheus+ELK。\n第7页 踩坑经验：bullet列出3个血泪教训——①分布式事务：最终一致性>强一致性，用Saga模式 ②服务间循环依赖：引入事件总线解耦 ③配置管理混乱：统一配置中心+灰度发布。\n第8页 成果数据：3个数据高亮——「部署频率 从月更→日更」「故障恢复 从4小时→15分钟」「系统可用性 从99.5%→99.99%」。\n第9页 未来方向：三列卡片——「Service Mesh」Istio+Envoy下沉基础设施、「Serverless」事件驱动+按需弹缩、「AI赋能」智能容量预测+异常检测。\n第10页 结尾：Q&A+参考资源链接。', scene: 'training', style: 'academic' },
+        { id: 'course-lecture', name: '课程讲义', desc: '知识体系、核心概念、案例', prompt: '请制作一份「认知心理学导论」课程讲义PPT，共10页。\n\n第1页 封面：「认知心理学导论——理解人类思维的科学」，教师姓名+课程编号+学期。\n第2页 课程概览：3个数据高亮展示课程框架——「3大核心理论」「6个经典实验」「12个应用案例」。\n第3页 核心概念：三列卡片——🧠「认知负荷理论」工作记忆容量7±2，教学需降低外在负荷，🔬「建构主义」学习者主动构建知识，教师是引导者，🎯「最近发展区」学生独立水平与潜在水平的差距是教学最佳区。\n第4页 信息加工模型：左侧色带标题「人类信息加工」，右侧用bullet列出流程——感觉登记（<1秒）→注意选择（过滤机制）→工作记忆（7±2组块）→长时记忆（无限容量）。每个阶段加emoji图标。\n第5页 经典实验：左右对比——左侧「Stroop效应」色词干扰实验说明自动化加工，右侧「Miller定律」7±2组块理论说明记忆容量限制。\n第6页 记忆原理：三列卡片——「编码」深度加工>浅层加工（Craik & Lockhart），「存储」间隔重复>集中学习（Ebbinghaus遗忘曲线），「提取」情境依赖+状态依赖影响回忆效果。\n第7页 注意力机制：bullet列出3个要点——①选择性注意：鸡尾酒会效应 ②持续性注意：警戒任务中的衰减 ③分配性注意：多任务处理的代价。\n第8页 应用案例：三列卡片——「教育领域」基于认知负荷的教学设计、「UI设计」符合注意规律的界面布局、「人工智能」认知启发的AI架构。\n第9页 本章小结：bullet编号列表——①认知心理学研究人类信息加工过程 ②工作记忆是瓶颈，7±2是关键 ③深度加工促进长时记忆 ④注意力资源有限需合理分配。\n第10页 结尾：思考题+下节预告+参考文献。', scene: 'training', style: 'academic' },
       ],
     },
     {
@@ -601,10 +662,8 @@ export default function PptPage() {
       icon: '📊',
       label: '数据报告',
       templates: [
-        { id: 'data-dashboard', name: '数据看板报告', desc: '关键指标、趋势分析、预警', prompt: '请制作数据看板报告PPT，包含核心指标、趋势分析、异常预警和优化建议，8-10页', scene: 'report', style: 'professional' },
-        { id: 'market-research', name: '市场调研报告', desc: '行业现状、用户画像、机会点', prompt: '请制作市场调研报告PPT，包含行业现状、用户画像分析、竞品对比和机会点，8-10页', scene: 'report', style: 'academic' },
-        { id: 'competitive-analysis', name: '竞品分析', desc: '竞品对比、差异化、策略建议', prompt: '请制作竞品分析PPT，包含竞品功能对比、差异化分析、SWOT和策略建议，6-8页', scene: 'report', style: 'professional' },
-        { id: 'user-research', name: '用户研究报告', desc: '用户反馈、行为分析、改进建议', prompt: '请制作用户研究报告PPT，包含用户反馈、行为分析、满意度数据和改进建议，8-10页', scene: 'report', style: 'academic' },
+        { id: 'data-dashboard', name: '数据看板报告', desc: '关键指标、趋势分析、预警', prompt: '请制作一份电商平台月度数据看板报告PPT，共8页。\n\n第1页 封面：「2026年5月电商平台数据月报」，副标题「数据智能部」。\n第2页 核心指标：4个数据高亮——「GMV ¥2.8亿」「日均订单 12.5万」「客单价 ¥224」「转化率 4.8%」。\n第3页 流量分析：三列卡片——「UV 5800万」环比+12%，「PV 3.2亿」环比+8%，「人均浏览5.5页」环比持平。\n第4页 用户分析：左右对比——左侧「新用户」占比35%，获客成本¥45，首单转化率28%；右侧「老用户」占比65%，复购率42%，客单价高出新用户60%。\n第5页 品类表现：用表格展示Top5品类（服饰/3C/食品/美妆/家居）的GMV、订单量、增长率、毛利率。\n第6页 营销效果：bullet列出3个重点活动——①5.1大促GMV¥4500万，ROI 1:8.5 ②会员日活动带动老客复购率+15% ③短视频渠道新增用户占比提升至22%。\n第7页 风险预警：三列卡片——⚠️「退货率上升」服饰类退货率18%需关注，📉「搜索转化下降」首页改版后搜索转化降0.3%，🔄「库存周转放缓」部分品类周转天数>30天。\n第8页 下月重点：bullet列出——①优化搜索算法提升转化 ②服饰品类退货率专项治理 ③短视频渠道加大投入 ④会员体系2.0上线。', scene: 'report', style: 'professional' },
+        { id: 'competitive-analysis', name: '竞品分析', desc: '竞品对比、差异化、策略建议', prompt: '请制作一份AI编程助手竞品分析PPT，共8页。\n\n第1页 封面：「AI编程助手竞品分析报告」，副标题「产品战略部·2026年6月」。\n第2页 市场格局：三列卡片——「海外选手」GitHub Copilot+Cursor+Codeium，「国内选手」通义灵码+百度Comate+CodeGeeX，「新兴玩家」Windsurf+Augment+Cody。\n第3页 功能对比：用表格展示6个竞品在代码补全/对话式编程/多文件编辑/项目理解/私有化部署5个维度的支持情况（✅/⚠️/❌）。\n第4页 核心差异：左右对比——左侧「Copilot优势」生态整合+代码质量+用户基数，右侧「国内产品优势」中文理解+私有化+合规+价格。\n第5页 用户口碑：三列卡片——⭐「易用性」Copilot领先，即装即用，📊「准确率」Cursor的Agent模式代码通过率最高，💰「性价比」Codeium免费版功能最全。\n第6页 SWOT分析：bullet列出我方——S:国内合规+中文优化 W:技术积累不足 O:企业私有化需求爆发 T:Copilot全球扩张。\n第7页 策略建议：bullet列出3个方向——①差异化：深耕企业私有化场景 ②技术追赶：Agent模式+多文件编辑能力 ③生态建设：IDE插件+API开放平台。\n第8页 结尾：总结+下一步行动计划。', scene: 'report', style: 'professional' },
       ],
     },
     {
@@ -612,10 +671,8 @@ export default function PptPage() {
       icon: '🎨',
       label: '创意设计',
       templates: [
-        { id: 'brand-story', name: '品牌故事', desc: '品牌起源、价值观、愿景', prompt: '请制作品牌故事PPT，包含品牌起源、核心价值观、品牌故事和未来愿景，6-8页', scene: 'general', style: 'creative' },
-        { id: 'event-plan', name: '活动策划方案', desc: '活动主题、流程、预算', prompt: '请制作活动策划方案PPT，包含活动主题、流程安排、场地布置和预算方案，8-10页', scene: 'general', style: 'creative' },
-        { id: 'portfolio', name: '作品集展示', desc: '项目作品、设计理念、成果', prompt: '请制作作品集展示PPT，包含代表项目、设计理念、技术方案和项目成果，8-10页', scene: 'general', style: 'creative' },
-        { id: 'proposal', name: '创意提案', desc: '创意概念、视觉呈现、执行方案', prompt: '请制作创意提案PPT，包含创意概念、视觉风格、执行方案和效果预期，6-8页', scene: 'pitch', style: 'creative' },
+        { id: 'brand-story', name: '品牌故事', desc: '品牌起源、价值观、愿景', prompt: '请制作一份品牌故事PPT，品牌名「茶里物语」——新中式茶饮品牌，共7页。\n\n第1页 封面：「茶里物语——一杯茶里的东方故事」，品牌Slogan「以茶为媒，链接古今」。\n第2页 品牌起源：左侧色带标题「缘起」，右侧讲述——创始人走访中国20座茶山，发现好茶只出口不内销，决心让国人喝到中国好茶。\n第3页 品牌理念：三列卡片——🍃「寻源」每款茶可溯源至具体茶山和制茶师，🫖「传承」古法制茶+现代萃取技术，🌸「创新」茶+花+果的东方风味融合。\n第4页 产品哲学：左右对比——左侧「传统茶饮」仪式感强但门槛高，右侧「茶里物语」保留仪式感+降低门槛+年轻人友好。\n第5页 空间体验：bullet列出3个设计理念——①新中式空间：竹+木+石材的东方美学 ②互动体验：手作茶饮+茶艺表演 ③社交场景：适合拍照分享的角落设计。\n第6页 品牌愿景：数据高亮——「3年100店」「覆盖20城」「年服务1000万杯」。\n第7页 结尾：品牌Slogan+招商联系方式。', scene: 'general', style: 'creative' },
+        { id: 'event-plan', name: '活动策划方案', desc: '活动主题、流程、预算', prompt: '请制作一份「2026公司年度技术峰会」活动策划方案PPT，共8页。\n\n第1页 封面：「TechForward 2026——年度技术峰会策划方案」，主办方+日期+地点。\n第2页 活动定位：3个数据高亮——「500+参会者」「20+演讲嘉宾」「2天沉浸体验」。\n第3页 活动亮点：三列卡片——🎤「顶级嘉宾」CTO/技术VP/开源维护者，🛠️「动手工坊」AI开发+云原生+前端实战，🤝「社交场景」技术社区晚宴+闪电演讲。\n第4页 议程安排：时间轴展示Day1——09:00开场→10:00主题演讲（3场）→14:00分论坛（AI/架构/前端3个track）→17:00圆桌对话→19:00晚宴。\n第5页 场地规划：左右对比——左侧「主会场」容纳500人+直播设备+同声传译，右侧「分会场」3个200人分会场+工坊区。\n第6页 宣传策略：bullet列出——①提前60天启动倒计时海报 ②技术社区KOL合作推广 ③往届精彩回顾短视频 ④早鸟票+团队票组合优惠。\n第7页 预算概览：用表格展示各项费用（场地/设备/嘉宾/餐饮/宣传/物料）的预算金额和占比。\n第8页 结尾：策划团队+联系方式+报名二维码占位。', scene: 'general', style: 'creative' },
       ],
     },
     {
@@ -623,10 +680,8 @@ export default function PptPage() {
       icon: '🌟',
       label: '个人成长',
       templates: [
-        { id: 'resume', name: '个人简历', desc: '教育、经历、技能、项目', prompt: '请制作个人简历PPT，包含教育背景、工作经历、技能专长和代表项目，6-8页', scene: 'general', style: 'minimal' },
-        { id: 'career-plan', name: '职业规划', desc: '现状分析、目标、发展路径', prompt: '请制作职业规划PPT，包含现状分析、职业目标、发展路径和行动计划，6-8页', scene: 'general', style: 'professional' },
-        { id: 'year-review', name: '个人年度回顾', desc: '成就、学习、新年计划', prompt: '请制作个人年度回顾PPT，包含年度成就、学习成长、旅行记录和新年计划，6-8页', scene: 'general', style: 'creative' },
-        { id: 'knowledge-map', name: '知识体系梳理', desc: '知识框架、核心要点、关联', prompt: '请制作知识体系梳理PPT，包含知识框架、核心要点、关联关系和学习建议，8-10页', scene: 'training', style: 'academic' },
+        { id: 'resume', name: '个人简历', desc: '教育、经历、技能、项目', prompt: '请制作一份高级Java工程师个人简历PPT，共6页。\n\n第1页 封面：姓名「张三」，职位「高级Java工程师 / 技术负责人」，联系方式（邮箱+手机+GitHub），一句话定位「8年Java架构经验，专注高并发系统设计与微服务治理」。\n第2页 个人简介：左侧色带放头像占位区和姓名，右侧——5年一线互联网经验+3年技术管理经验，主导过日活千万级系统架构设计，带领15人团队完成3次重大架构升级。\n第3页 工作经历：时间轴布局——2024-至今「某大厂」技术负责人，负责推荐系统架构升级；2021-2024「某独角兽」高级工程师，主导订单系统微服务化；2018-2021「某上市公司」Java工程师，参与核心交易系统开发。\n第4页 核心技能：三列卡片——💻「技术栈」Java/Spring Boot/MySQL/Redis/Kafka/ES/Docker/K8s，🏗️「架构能力」微服务设计/分布式系统/高并发方案/DDD领域驱动，🚀「工程效能」CI/CD/自动化测试/代码质量/性能调优。\n第5页 项目成果：数据高亮——「系统可用性 99.99%」「QPS峰值 50万+」「响应时间 P99<100ms」「团队效率提升 3倍」。\n第6页 结尾：教育背景（XX大学·计算机科学·硕士）+一句话「代码改变世界，架构成就未来」。', scene: 'general', style: 'minimal' },
+        { id: 'year-review', name: '个人年度回顾', desc: '成就、学习、新年计划', prompt: '请制作一份2026年个人年度回顾PPT，共7页。\n\n第1页 封面：「我的2026——年度回顾与展望」，姓名+年份。\n第2页 年度关键词：3个数据高亮——「12本书」「6个新技能」「3次突破」。\n第3页 职业成长：时间轴——Q1完成架构师认证、Q2主导核心系统重构、Q3在技术大会做演讲、Q4晋升技术总监。\n第4页 技能收获：三列卡片——📖「技术能力」掌握K8s+Service Mesh+LLM应用开发，🎯「管理能力」团队从8人扩展到20人+建立OKR体系，💡「软技能」公众演讲+跨部门协作+向上管理。\n第5页 年度好书：bullet列出3本——①《凤凰项目》理解DevOps本质 ②《系统设计面试》架构思维升级 ③《纳瓦尔宝典》重新理解财富与幸福。\n第6页 2027计划：三列卡片——🚀「职业」技术VP目标+建立技术影响力，📚「学习」深度学习+系统设计+英语提升，💪「生活」健身100次+旅行3座城市+读15本书。\n第7页 结尾：年度座右铭「Stay hungry, stay foolish」。', scene: 'general', style: 'creative' },
       ],
     },
   ];
@@ -961,7 +1016,7 @@ export default function PptPage() {
                   el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
                   // Last resort: find the first string field that isn't a known meta field
                   if (!el.content) {
-                    const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline']);
+                    const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline','icon','number','radius','shadow','opacity','gradient','thickness','lineSpacing','letterSpacing']);
                     for (const key of Object.keys(el)) {
                       if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
                         el.content = el[key];
@@ -974,6 +1029,8 @@ export default function PptPage() {
                 if (!el.kind) {
                   if (el.rows && Array.isArray(el.rows)) {
                     el.kind = 'table';
+                  } else if (el.icon && !el.content) {
+                    el.kind = 'icon';
                   } else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) {
                     el.kind = 'image';
                   } else if (el.content) {
@@ -983,6 +1040,10 @@ export default function PptPage() {
                   } else {
                     el.kind = 'text'; // default
                   }
+                }
+                // For icon kind: if icon field exists, use it as content fallback
+                if (el.kind === 'icon' && !el.content && el.icon) {
+                  el.content = el.icon;
                 }
                 return el;
               }),
@@ -1206,84 +1267,87 @@ export default function PptPage() {
   // Helper: render layout-specific mini decorations for thumbnails
   const renderMiniDecor = (layout: string, slideIdx: number, t: PptTheme) => {
     const coverNavyPct = (t.coverNavyHeight / 7.5) * 100;
+    const shadowMini = '0 1px 3px rgba(0,0,0,0.1)';
 
     if (layout === 'title_classic' || layout === 'end_slide') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: `${coverNavyPct}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: `${coverNavyPct}%`, background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
         <div className="absolute inset-x-0" style={{ top: `${coverNavyPct}%`, height: '2%', backgroundColor: `#${t.accent}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute rounded-full" style={{ right:'6%', top:'8%', width:'16%', height:'16%', backgroundColor:`#${t.primaryLight}`, opacity:0.3 }} />
       </>;
     } else if (layout === 'title_center') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: '4%', backgroundColor: `#${t.primary}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '4%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: '4%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '4%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
         <div className="absolute inset-x-0" style={{ top: '4%', height: '1%', backgroundColor: `#${t.accent}` }} />
         <div className="absolute inset-x-0" style={{ bottom: '4%', height: '1%', backgroundColor: `#${t.accent}` }} />
+        <div className="absolute rounded-full" style={{ left:'38%', top:'26%', width:'24%', height:'24%', backgroundColor:`#${t.offWhite}`, opacity:0.4, boxShadow: shadowMini }} />
       </>;
     } else if (layout === 'title_split') {
       return <>
-        <div className="absolute left-0 top-0 bottom-0 w-1/2" style={{ backgroundColor: `#${t.primary}` }} />
-        <div className="absolute left-1/2 top-0 bottom-0 w-[2%]" style={{ backgroundColor: `#${t.accent}` }} />
+        <div className="absolute left-0 top-0 bottom-0 w-1/2" style={{ background: `linear-gradient(180deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute right-0 top-0 bottom-0 w-1/2" style={{ backgroundColor: `#${t.offWhite}` }} />
+        <div className="absolute" style={{ left:'50%', top:0, width:'1%', height:'100%', backgroundColor:`#${t.accent}` }} />
       </>;
     } else if (layout === 'card_3col') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.9/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'5%', top:'28%', width:'27%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'37%', top:'28%', width:'27%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'69%', top:'28%', width:'27%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: '12%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
+        {[0, 34, 68].map((leftPct, i) => (
+          <div key={i} className="absolute rounded-sm" style={{ left:`${leftPct}%`, top:'28%', width:'30%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}`, boxShadow: shadowMini }} />
+        ))}
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else if (layout === 'comparison') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.9/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'4%', top:'22%', width:'44%', height:'60%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'52%', top:'22%', width:'44%', height:'60%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.accent}` }} />
-        <div className="absolute" style={{ left:'49.5%', top:'22%', width:'1%', height:'60%', backgroundColor:`#${t.primaryLight}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: '12%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute rounded-sm" style={{ left:'4%', top:'22%', width:'44%', height:'60%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}`, boxShadow: shadowMini }} />
+        <div className="absolute rounded-sm" style={{ left:'52%', top:'22%', width:'44%', height:'60%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.accent}`, boxShadow: shadowMini }} />
+        <div className="absolute" style={{ left:'49.5%', top:'22%', width:'1%', height:'60%', backgroundColor:`#${t.primaryLight}`, opacity:0.5 }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else if (layout === 'timeline') {
       return <>
-        <div className="absolute" style={{ left:0, top:0, width:'4%', height:'100%', backgroundColor:`#${t.primary}` }} />
-        <div className="absolute" style={{ left:'10%', top:'46%', width:'85%', height:'2%', backgroundColor:`#${t.primaryLight}` }} />
-        <div className="absolute rounded-full" style={{ left:'16%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.primary}` }} />
-        <div className="absolute rounded-full" style={{ left:'40%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.primary}` }} />
-        <div className="absolute rounded-full" style={{ left:'64%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.primary}` }} />
-        <div className="absolute rounded-full" style={{ left:'88%', top:'40%', width:'12%', height:'12%', backgroundColor:`#${t.accent}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute" style={{ left:0, top:0, width:'4%', height:'100%', background: `linear-gradient(180deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute" style={{ left:'10%', top:'46%', width:'85%', height:'2%', backgroundColor:`#${t.primaryLight}`, opacity:0.5 }} />
+        {['16%','39%','62%','85%'].map((leftPct, i) => (
+          <div key={i} className="absolute rounded-full" style={{ left:leftPct, top:'40%', width:'12%', height:'12%', backgroundColor:`#${i<3?t.primary:t.accent}`, boxShadow: shadowMini }} />
+        ))}
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else if (layout === 'data_highlight') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.7/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: '10%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
         <div className="absolute inset-x-0 bottom-0" style={{ height: '22%', backgroundColor: `#${t.offWhite}` }} />
-        <div className="absolute" style={{ left:'4%', top:'16%', width:'0.5%', height:'60%', backgroundColor:`#${t.primary}` }} />
-        <div className="absolute inset-x-0" style={{ bottom: '5%', height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute" style={{ left:'4%', top:'16%', width:'0.5%', height:'60%', backgroundColor:`#${t.primary}`, borderRadius:'4px' }} />
+        <div className="absolute inset-x-0" style={{ bottom: '5%', height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else if (layout === 'quote_slide') {
       return <>
-        <div className="absolute inset-x-0" style={{ backgroundColor: `#${t.offWhite}`, inset:0 }} />
-        <div className="absolute" style={{ left:0, top:0, width:'6%', height:'100%', backgroundColor:`#${t.primary}` }} />
-        <div className="absolute" style={{ left:'6%', top:'37%', width:'1%', height:'24%', backgroundColor:`#${t.accent}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0" style={{ backgroundColor: `#${t.offWhite}`, inset:'0' }} />
+        <div className="absolute" style={{ left:0, top:0, width:'6%', height:'100%', background: `linear-gradient(180deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute" style={{ left:'6%', top:'37%', width:'1%', height:'24%', backgroundColor:`#${t.accent}`, borderRadius:'4px' }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else if (layout === 'card_2col') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.9/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'8%', top:'28%', width:'38%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
-        <div className="absolute rounded-sm" style={{ left:'54%', top:'28%', width:'38%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: '12%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
+        <div className="absolute rounded-sm" style={{ left:'8%', top:'28%', width:'38%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}`, boxShadow: shadowMini }} />
+        <div className="absolute rounded-sm" style={{ left:'54%', top:'28%', width:'38%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}`, boxShadow: shadowMini }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else if (layout === 'content_top') {
       return <>
-        <div className="absolute inset-x-0 top-0" style={{ height: '16%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 top-0" style={{ height: '16%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
         <div className="absolute inset-x-0" style={{ top: '16%', height: '2%', backgroundColor: `#${t.accent}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     } else {
-      // Default content_classic: Left wide band
+      // Default content_classic
       return <>
-        <div className="absolute" style={{ left:0, top:0, width:'34%', height:'95%', backgroundColor:`#${t.primary}` }} />
+        <div className="absolute" style={{ left:0, top:0, width:'34%', height:'95%', background: `linear-gradient(180deg, #${t.primary}, #${t.primaryMid})` }} />
         <div className="absolute" style={{ left:'34%', top:0, width:'0.5%', height:'95%', backgroundColor:`#${t.accent}` }} />
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', background: `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})` }} />
       </>;
     }
   };
@@ -1407,13 +1471,18 @@ export default function PptPage() {
               backgroundColor: el.fill ? `#${el.fill}` : 'transparent',
               textAlign: el.align || 'left',
               display: 'flex',
-              alignItems: el.fontSize && el.fontSize >= 30 ? 'center' : 'flex-start',
-              lineHeight: 1.5,
+              alignItems: el.fontSize && el.fontSize >= 30 ? 'center' : (el.icon ? 'center' : 'flex-start'),
+              lineHeight: fontSizeNum >= 30 ? 1.2 : 1.6,
+              letterSpacing: fontSizeNum >= 30 ? '0.5px' : '0.2px',
               whiteSpace: 'pre-wrap',
-              paddingTop: el.fontSize && el.fontSize < 22 ? '2px' : '0',
+              paddingTop: fontSizeNum < 22 ? '2px' : '0',
+              textShadow: (fontSizeNum >= 30 && textColor === `#${activeTheme.white}`) ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
+              gap: el.icon ? '4px' : '0',
             }}
-            dangerouslySetInnerHTML={{ __html: (el.content || '').replace(/\n/g, '<br/>') }}
-          />
+          >
+            {el.icon && <span style={{ fontSize: `${fontSize * 1.1}px`, flexShrink: 0 }}>{el.icon}</span>}
+            <span dangerouslySetInnerHTML={{ __html: (el.content || '').replace(/\n/g, '<br/>') }} />
+          </div>
         );
       }
 
@@ -1428,8 +1497,103 @@ export default function PptPage() {
               width: `${wPct}%`,
               height: `${hPct}%`,
               backgroundColor: el.fill ? `#${el.fill}` : '#2E5090',
+              borderRadius: el.radius ? `${el.radius}px` : '0',
+              boxShadow: el.shadow ? '0 2px 8px rgba(0,0,0,0.12)' : 'none',
+              opacity: el.opacity ?? 1,
             }}
           />
+        );
+      }
+
+      // Icon element: renders emoji/icon at a specific position
+      if (el.kind === 'icon') {
+        const iconSize = Math.max(16, (el.fontSize || 32) * 0.7);
+        return (
+          <div
+            key={idx}
+            className="absolute flex items-center justify-center"
+            style={{
+              left: `${xPct}%`,
+              top: `${yPct}%`,
+              width: `${wPct}%`,
+              height: `${hPct}%`,
+              fontSize: `${iconSize}px`,
+              color: el.color ? `#${el.color}` : `#${activeTheme.primary}`,
+            }}
+          >
+            {el.icon || el.content || '●'}
+          </div>
+        );
+      }
+
+      // Divider line element
+      if (el.kind === 'divider') {
+        const isHorizontal = (el.w || 0) > (el.h || 0);
+        return (
+          <div
+            key={idx}
+            className="absolute"
+            style={{
+              left: `${xPct}%`,
+              top: `${yPct}%`,
+              width: isHorizontal ? `${wPct}%` : `${(el.thickness || 0.04) / 13.33 * 100}%`,
+              height: isHorizontal ? `${(el.thickness || 0.04) / 7.5 * 100}%` : `${hPct}%`,
+              backgroundColor: el.color ? `#${el.color}` : `#${activeTheme.accent}`,
+              borderRadius: '2px',
+              opacity: el.opacity ?? 0.8,
+            }}
+          />
+        );
+      }
+
+      // Numbered bullet element: circle with number + text
+      if (el.kind === 'bullet') {
+        const bulletSize = Math.max(20, (el.fontSize || 14) * 0.7);
+        const numSize = Math.max(10, bulletSize * 0.55);
+        return (
+          <div
+            key={idx}
+            className="absolute"
+            style={{
+              left: `${xPct}%`,
+              top: `${yPct}%`,
+              width: `${wPct}%`,
+              height: `${hPct}%`,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '6px',
+            }}
+          >
+            {/* Number circle */}
+            <div
+              style={{
+                minWidth: `${bulletSize}px`,
+                height: `${bulletSize}px`,
+                borderRadius: '50%',
+                backgroundColor: el.fill ? `#${el.fill}` : `#${activeTheme.primary}`,
+                color: `#${activeTheme.white}`,
+                fontSize: `${numSize}px`,
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+              }}
+            >
+              {el.number ?? 1}
+            </div>
+            {/* Text content */}
+            <div
+              style={{
+                fontSize: `${bulletSize * 0.72}px`,
+                color: el.color ? `#${el.color}` : `#${activeTheme.bodyColor}`,
+                lineHeight: 1.5,
+                fontWeight: el.bold ? 'bold' : 'normal',
+              }}
+              dangerouslySetInnerHTML={{ __html: (el.content || '').replace(/\n/g, '<br/>') }}
+            />
+          </div>
         );
       }
 
@@ -1477,7 +1641,19 @@ export default function PptPage() {
 
   // Render current slide detail
   // Helper: render a positioned div for theme decoration in preview
-  const renderDecorDiv = (x: number, y: number, w: number, h: number, color: string, key: string, isCircle = false) => {
+  // Enhanced with gradient, shadow, rounded corners support
+  const renderDecorDiv = (
+    x: number, y: number, w: number, h: number,
+    color: string, key: string,
+    opts?: {
+      isCircle?: boolean;
+      radius?: number;      // border-radius in px
+      shadow?: boolean;
+      gradient?: string;    // CSS gradient string, e.g. 'linear-gradient(135deg, #1F3864, #2E5090)'
+      opacity?: number;     // 0-1
+    }
+  ) => {
+    const { isCircle = false, radius = 0, shadow = false, gradient, opacity = 1 } = opts || {};
     return (
       <div
         key={key}
@@ -1487,14 +1663,16 @@ export default function PptPage() {
           top: `${(y / 7.5) * 100}%`,
           width: `${(w / 13.33) * 100}%`,
           height: `${(h / 7.5) * 100}%`,
-          backgroundColor: `#${color}`,
-          borderRadius: isCircle ? '50%' : '0',
+          background: gradient || `#${color}`,
+          borderRadius: isCircle ? '50%' : (radius ? `${radius}px` : '0'),
+          boxShadow: shadow ? '0 2px 8px rgba(0,0,0,0.12)' : 'none',
+          opacity,
         }}
       />
     );
   };
 
-  // Render theme decorations for preview — layout-specific skeletons
+  // Render theme decorations for preview — layout-specific skeletons (ENHANCED)
   const renderThemeDecor = (slideData: PptSlide, slideIdx: number) => {
     const layout = inferLayout(slideData, slideIdx, pptData?.slides.length ?? 1);
     const t = activeTheme;
@@ -1505,86 +1683,197 @@ export default function PptPage() {
     const pctW = (v: number) => (v / 13.33) * 100;
     const pctH = (v: number) => (v / 7.5) * 100;
 
+    // Common gradient helpers
+    const primaryGrad = `linear-gradient(135deg, #${t.primary}, #${t.primaryMid})`;
+    const primaryVertGrad = `linear-gradient(180deg, #${t.primary}, #${t.primaryMid})`;
+
     if (layout === 'title_classic' || layout === 'end_slide') {
-      // Cover / End Classic
-      elements.push(renderDecorDiv(0, 0, 13.33, t.coverNavyHeight, t.primary, 't-top'));
+      // Cover / End Classic — gradient cover + soft accent
+      elements.push(renderDecorDiv(0, 0, 13.33, t.coverNavyHeight, t.primary, 't-top', {
+        gradient: primaryGrad, radius: 0,
+      }));
       elements.push(renderDecorDiv(0, t.coverNavyHeight, 13.33, 0.12, t.accent, 't-stripe'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
-      elements.push(renderDecorDiv(10.5, 0.6, 2.2, 2.2, t.primaryLight, 't-circle', true));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
+      // Decorative circle with transparency
+      elements.push(renderDecorDiv(10.5, 0.6, 2.2, 2.2, t.primaryLight, 't-circle', {
+        isCircle: true, opacity: 0.3,
+      }));
+      // Secondary subtle circle
+      elements.push(renderDecorDiv(0.3, 4.8, 1.4, 1.4, t.primaryLight, 't-circle2', {
+        isCircle: true, opacity: 0.15,
+      }));
     } else if (layout === 'title_center') {
-      // Cover Center
-      elements.push(renderDecorDiv(0, 0, 13.33, 0.25, t.primary, 't-top'));
-      elements.push(renderDecorDiv(0, 7.25, 13.33, 0.25, t.primary, 't-bottom'));
+      // Cover Center — gradient bars + soft center circle
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.25, t.primary, 't-top', {
+        gradient: primaryGrad,
+      }));
+      elements.push(renderDecorDiv(0, 7.25, 13.33, 0.25, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
       elements.push(renderDecorDiv(0, 0.25, 13.33, 0.05, t.accent, 't-top-accent'));
       elements.push(renderDecorDiv(0, 7.2, 13.33, 0.05, t.accent, 't-bot-accent'));
-      elements.push(renderDecorDiv(5.16, 2.25, 3.0, 3.0, t.offWhite, 't-circle', true));
+      elements.push(renderDecorDiv(5.16, 2.25, 3.0, 3.0, t.offWhite, 't-circle', {
+        isCircle: true, opacity: 0.4, shadow: true,
+      }));
     } else if (layout === 'title_split') {
-      // Cover Split
-      elements.push(renderDecorDiv(0, 0, 6.66, 7.5, t.primary, 't-left'));
+      // Cover Split — gradient left + subtle divider
+      elements.push(renderDecorDiv(0, 0, 6.66, 7.5, t.primary, 't-left', {
+        gradient: primaryVertGrad,
+      }));
       elements.push(renderDecorDiv(6.66, 0, 6.67, 7.5, t.offWhite, 't-right'));
-      elements.push(renderDecorDiv(6.66, 0, 0.1, 7.5, t.accent, 't-divider'));
+      elements.push(renderDecorDiv(6.66, 0, 0.1, 7.5, t.accent, 't-divider', {
+        radius: 2,
+      }));
+      // Decorative circle on left panel
+      elements.push(renderDecorDiv(1.0, 5.0, 1.8, 1.8, t.primaryLight, 't-circle1', {
+        isCircle: true, opacity: 0.2,
+      }));
     } else if (layout === 'card_3col') {
-      // 3-Column Cards
-      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
+      // 3-Column Cards — shadow cards with rounded top accent
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header', {
+        gradient: primaryGrad,
+      }));
       elements.push(renderDecorDiv(0, 0.9, 13.33, 0.06, t.accent, 't-accent'));
-      elements.push(renderDecorDiv(0.5, 1.6, 3.8, 5.0, t.offWhite, 't-card1bg'));
-      elements.push(renderDecorDiv(4.75, 1.6, 3.8, 5.0, t.offWhite, 't-card2bg'));
-      elements.push(renderDecorDiv(9.0, 1.6, 3.8, 5.0, t.offWhite, 't-card3bg'));
-      elements.push(renderDecorDiv(0.5, 1.6, 3.8, 0.12, t.primary, 't-card1top'));
-      elements.push(renderDecorDiv(4.75, 1.6, 3.8, 0.12, t.primary, 't-card2top'));
-      elements.push(renderDecorDiv(9.0, 1.6, 3.8, 0.12, t.primary, 't-card3top'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(0.5, 1.6, 3.8, 5.0, t.offWhite, 't-card1bg', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(4.75, 1.6, 3.8, 5.0, t.offWhite, 't-card2bg', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(9.0, 1.6, 3.8, 5.0, t.offWhite, 't-card3bg', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(0.5, 1.6, 3.8, 0.12, t.primary, 't-card1top', {
+        gradient: primaryGrad, radius: 8,
+      }));
+      elements.push(renderDecorDiv(4.75, 1.6, 3.8, 0.12, t.primary, 't-card2top', {
+        gradient: primaryGrad, radius: 8,
+      }));
+      elements.push(renderDecorDiv(9.0, 1.6, 3.8, 0.12, t.primary, 't-card3top', {
+        gradient: primaryGrad, radius: 8,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
     } else if (layout === 'comparison') {
-      // Comparison: Left-right
-      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
+      // Comparison: shadow cards with accent divider
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header', {
+        gradient: primaryGrad,
+      }));
       elements.push(renderDecorDiv(0, 0.9, 13.33, 0.06, t.accent, 't-accent'));
-      elements.push(renderDecorDiv(0.5, 1.5, 5.9, 5.2, t.offWhite, 't-leftblock'));
-      elements.push(renderDecorDiv(0.5, 1.5, 5.9, 0.1, t.primary, 't-lefttop'));
-      elements.push(renderDecorDiv(6.9, 1.5, 5.9, 5.2, t.offWhite, 't-rightblock'));
-      elements.push(renderDecorDiv(6.9, 1.5, 5.9, 0.1, t.accent, 't-righttop'));
-      elements.push(renderDecorDiv(6.55, 1.5, 0.2, 5.2, t.primaryLight, 't-divider'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(0.5, 1.5, 5.9, 5.2, t.offWhite, 't-leftblock', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(0.5, 1.5, 5.9, 0.1, t.primary, 't-lefttop', {
+        gradient: primaryGrad, radius: 8,
+      }));
+      elements.push(renderDecorDiv(6.9, 1.5, 5.9, 5.2, t.offWhite, 't-rightblock', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(6.9, 1.5, 5.9, 0.1, t.accent, 't-righttop', {
+        radius: 8,
+      }));
+      elements.push(renderDecorDiv(6.55, 1.5, 0.2, 5.2, t.primaryLight, 't-divider', {
+        radius: 2, opacity: 0.5,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
     } else if (layout === 'timeline') {
-      // Timeline: Vertical left bar + horizontal flow + dots
-      elements.push(renderDecorDiv(0, 0, 0.5, 7.5, t.primary, 't-leftbar'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
-      elements.push(renderDecorDiv(1.2, 3.5, 11.5, 0.12, t.primaryLight, 't-line'));
-      elements.push(renderDecorDiv(2.5, 3.2, 0.7, 0.7, t.primary, 't-dot1'));
-      elements.push(renderDecorDiv(5.5, 3.2, 0.7, 0.7, t.primary, 't-dot2'));
-      elements.push(renderDecorDiv(8.5, 3.2, 0.7, 0.7, t.primary, 't-dot3'));
-      elements.push(renderDecorDiv(11.5, 3.2, 0.7, 0.7, t.accent, 't-dot4'));
+      // Timeline: gradient left bar + soft dots
+      elements.push(renderDecorDiv(0, 0, 0.5, 7.5, t.primary, 't-leftbar', {
+        gradient: primaryVertGrad,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
+      elements.push(renderDecorDiv(1.2, 3.5, 11.5, 0.12, t.primaryLight, 't-line', {
+        opacity: 0.5,
+      }));
+      elements.push(renderDecorDiv(2.5, 3.2, 0.7, 0.7, t.primary, 't-dot1', {
+        isCircle: true, shadow: true,
+      }));
+      elements.push(renderDecorDiv(5.5, 3.2, 0.7, 0.7, t.primary, 't-dot2', {
+        isCircle: true, shadow: true,
+      }));
+      elements.push(renderDecorDiv(8.5, 3.2, 0.7, 0.7, t.primary, 't-dot3', {
+        isCircle: true, shadow: true,
+      }));
+      elements.push(renderDecorDiv(11.5, 3.2, 0.7, 0.7, t.accent, 't-dot4', {
+        isCircle: true, shadow: true,
+      }));
     } else if (layout === 'data_highlight') {
-      // Data Highlight: Narrow header + bottom band + left accent
-      elements.push(renderDecorDiv(0, 0, 13.33, 0.7, t.primary, 't-header'));
+      // Data Highlight: gradient header + soft bottom band
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.7, t.primary, 't-header', {
+        gradient: primaryGrad,
+      }));
       elements.push(renderDecorDiv(0, 0.7, 13.33, 0.06, t.accent, 't-accent'));
-      elements.push(renderDecorDiv(0, 6.0, 13.33, 1.5, t.offWhite, 't-bottomband'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
-      elements.push(renderDecorDiv(0.5, 1.2, 0.08, 4.5, t.primary, 't-leftbar'));
+      elements.push(renderDecorDiv(0, 6.0, 13.33, 1.5, t.offWhite, 't-bottomband', {
+        radius: 0,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
+      elements.push(renderDecorDiv(0.5, 1.2, 0.08, 4.5, t.primary, 't-leftbar', {
+        radius: 4,
+      }));
     } else if (layout === 'quote_slide') {
-      // Quote: Wide left bar + soft bg
+      // Quote: gradient left bar + soft bg
       elements.push(renderDecorDiv(0, 0, 13.33, 7.5, t.offWhite, 't-bg'));
-      elements.push(renderDecorDiv(0, 0, 0.8, 7.5, t.primary, 't-leftbar'));
-      elements.push(renderDecorDiv(0.8, 2.8, 0.12, 1.8, t.accent, 't-accent'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(0, 0, 0.8, 7.5, t.primary, 't-leftbar', {
+        gradient: primaryVertGrad, radius: 0,
+      }));
+      elements.push(renderDecorDiv(0.8, 2.8, 0.12, 1.8, t.accent, 't-accent', {
+        radius: 4,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
     } else if (layout === 'card_2col') {
-      // 2-Column Cards
-      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
+      // 2-Column Cards — shadow + rounded
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header', {
+        gradient: primaryGrad,
+      }));
       elements.push(renderDecorDiv(0, 0.9, 13.33, 0.06, t.accent, 't-accent'));
-      elements.push(renderDecorDiv(1.0, 1.6, 5.0, 5.0, t.offWhite, 't-card1bg'));
-      elements.push(renderDecorDiv(7.33, 1.6, 5.0, 5.0, t.offWhite, 't-card2bg'));
-      elements.push(renderDecorDiv(1.0, 1.6, 5.0, 0.15, t.primary, 't-card1top'));
-      elements.push(renderDecorDiv(7.33, 1.6, 5.0, 0.15, t.primary, 't-card2top'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(1.0, 1.6, 5.0, 5.0, t.offWhite, 't-card1bg', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(7.33, 1.6, 5.0, 5.0, t.offWhite, 't-card2bg', {
+        shadow: true, radius: 8,
+      }));
+      elements.push(renderDecorDiv(1.0, 1.6, 5.0, 0.15, t.primary, 't-card1top', {
+        gradient: primaryGrad, radius: 8,
+      }));
+      elements.push(renderDecorDiv(7.33, 1.6, 5.0, 0.15, t.primary, 't-card2top', {
+        gradient: primaryGrad, radius: 8,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
     } else if (layout === 'content_top') {
-      // Content Top Bar
-      elements.push(renderDecorDiv(0, 0, 13.33, 1.2, t.primary, 't-header'));
-      elements.push(renderDecorDiv(0, 1.2, 13.33, 0.08, t.accent, 't-accent'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      // Content Top Bar — gradient header
+      elements.push(renderDecorDiv(0, 0, 13.33, 1.2, t.primary, 't-header', {
+        gradient: primaryGrad,
+      }));
+      elements.push(renderDecorDiv(0, 1.2, 13.33, 0.08, t.accent, 't-accent', {
+        radius: 0,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
     } else {
-      // Default content_classic: Left wide color band + right content area
-      elements.push(renderDecorDiv(0, 0, 4.5, 7.15, t.primary, 't-leftband'));
-      elements.push(renderDecorDiv(4.5, 0, 0.08, 7.15, t.accent, 't-divider'));
-      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+      // Default content_classic: gradient left band + accent divider
+      elements.push(renderDecorDiv(0, 0, 4.5, 7.15, t.primary, 't-leftband', {
+        gradient: primaryVertGrad,
+      }));
+      elements.push(renderDecorDiv(4.5, 0, 0.08, 7.15, t.accent, 't-divider', {
+        radius: 4,
+      }));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom', {
+        gradient: primaryGrad,
+      }));
     }
     return elements;
   };
