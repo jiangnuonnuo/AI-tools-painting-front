@@ -245,11 +245,20 @@ const DEFAULT_THEME = THEMES[0];
 // Smart layout inference — ensure visual diversity even when AI doesn't specify layout
 const inferLayout = (slideData: PptSlide, slideIdx: number, totalSlides: number): string => {
   let layout = slideData.layout || '';
-  const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
+  // Map old names to new names just in case
+  if (layout === 'title_slide') layout = 'title_classic';
+  if (layout === 'content_slide') layout = 'content_classic';
+
+  const isTitleSlide = layout.startsWith('title_') || slideIdx === 0;
   const isEndSlide = layout === 'end_slide' || slideIdx === totalSlides - 1;
-  if (!layout && !isTitleSlide && !isEndSlide) {
-    const diverseLayouts = ['content_slide', 'card_3col', 'comparison', 'timeline', 'data_highlight', 'quote_slide'];
-    layout = diverseLayouts[(slideIdx - 1) % diverseLayouts.length];
+  
+  if (!layout) {
+    if (isTitleSlide) layout = 'title_classic';
+    else if (isEndSlide) layout = 'end_slide';
+    else {
+      const diverseLayouts = ['content_top', 'content_classic', 'card_3col', 'card_2col', 'comparison', 'timeline', 'data_highlight', 'quote_slide'];
+      layout = diverseLayouts[(slideIdx - 1) % diverseLayouts.length];
+    }
   }
   return layout;
 };
@@ -262,7 +271,7 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
   data.slides.forEach((slideData, slideIdx) => {
     const slide = pres.addSlide();
     const layout = inferLayout(slideData, slideIdx, data.slides.length);
-    const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
+    const isTitleSlide = layout.startsWith('title_') || slideIdx === 0;
     const isEndSlide = layout === 'end_slide' || slideIdx === data.slides.length - 1;
 
     // === STEP 1: Layout-specific theme decoration ===
@@ -273,14 +282,33 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
         x, y, w, h, fill: { color }, line: { width: 0 },
       });
     };
+    // Helper: add circle shape
+    const addCircle = (x: number, y: number, w: number, h: number, color: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      slide.addShape((pres as any).shapes.OVAL, {
+        x, y, w, h, fill: { color }, line: { width: 0 },
+      });
+    };
 
-    if (isTitleSlide || isEndSlide) {
-      // ── Cover / End: Full-width primary top + accent stripe + bottom bar ──
+    if (layout === 'title_classic' || layout === 'end_slide') {
+      // ── Cover / End Classic: Full-width primary top + accent stripe + bottom bar ──
       addRect(0, 0, 13.33, theme.coverNavyHeight, theme.primary);
       addRect(0, theme.coverNavyHeight, 13.33, 0.12, theme.accent);
       addRect(0, 7.15, 13.33, 0.35, theme.primary);
       // Decorative: large circle watermark
-      addRect(10.5, 0.6, 2.2, 2.2, theme.primaryLight);
+      addCircle(10.5, 0.6, 2.2, 2.2, theme.primaryLight);
+    } else if (layout === 'title_center') {
+      // ── Cover Center: Clean borders + central circle watermark ──
+      addRect(0, 0, 13.33, 0.25, theme.primary);
+      addRect(0, 7.25, 13.33, 0.25, theme.primary);
+      addRect(0, 0.25, 13.33, 0.05, theme.accent);
+      addRect(0, 7.2, 13.33, 0.05, theme.accent);
+      addCircle(5.16, 2.25, 3.0, 3.0, theme.offWhite);
+    } else if (layout === 'title_split') {
+      // ── Cover Split: 50/50 Left Right ──
+      addRect(0, 0, 6.66, 7.5, theme.primary);
+      addRect(6.66, 0, 6.67, 7.5, theme.offWhite);
+      addRect(6.66, 0, 0.1, 7.5, theme.accent);
     } else if (layout === 'card_3col') {
       // ── 3-Column Cards: Short header + 3 card background blocks ──
       addRect(0, 0, 13.33, 0.9, theme.primary);
@@ -332,8 +360,22 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
       addRect(0, 0, 0.8, 7.5, theme.primary); // Wide left bar
       addRect(0.8, 2.8, 0.12, 1.8, theme.accent); // Accent mark
       addRect(0, 7.15, 13.33, 0.35, theme.primary);
+    } else if (layout === 'card_2col') {
+      // ── 2-Column Cards ──
+      addRect(0, 0, 13.33, 0.9, theme.primary);
+      addRect(0, 0.9, 13.33, 0.06, theme.accent);
+      addRect(1.0, 1.6, 5.0, 5.0, theme.offWhite);
+      addRect(7.33, 1.6, 5.0, 5.0, theme.offWhite);
+      addRect(1.0, 1.6, 5.0, 0.15, theme.primary);
+      addRect(7.33, 1.6, 5.0, 0.15, theme.primary);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
+    } else if (layout === 'content_top') {
+      // ── Content Top Bar: Clean top header ──
+      addRect(0, 0, 13.33, 1.2, theme.primary);
+      addRect(0, 1.2, 13.33, 0.08, theme.accent);
+      addRect(0, 7.15, 13.33, 0.35, theme.primary);
     } else {
-      // ── Default content_slide: Left wide color band + right content area ──
+      // ── Default content_classic: Left wide color band + right content area ──
       addRect(0, 0, 4.5, 7.15, theme.primary); // Left wide band
       addRect(4.5, 0, 0.08, 7.15, theme.accent); // Accent vertical divider
       addRect(0, 7.15, 13.33, 0.35, theme.primary); // Bottom bar
@@ -351,21 +393,38 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
 
           // Title color & position logic — varies by layout type
           if (textFontSize >= 24) {
-            if (isTitleSlide || isEndSlide) {
-              textColor = theme.white; // Cover/End: in primary area
-            } else if (layout === 'content_slide') {
-              textColor = theme.white; // Left band: title is white
-            } else if (layout === 'card_3col' || layout === 'comparison') {
-              textY = 0.15; // Short header bar
+            if (layout === 'title_classic' || layout === 'end_slide') {
+              textColor = theme.white;
+            } else if (layout === 'title_center') {
+              textColor = theme.primary;
+            } else if (layout === 'title_split') {
+              // Usually left aligned in the primary box
+              textColor = theme.white;
+            } else if (layout === 'content_classic') {
+              textColor = theme.white;
+            } else if (layout === 'content_top') {
+              textY = 0.25;
+              textColor = theme.white;
+            } else if (layout === 'card_3col' || layout === 'card_2col' || layout === 'comparison') {
+              textY = 0.15;
               textColor = theme.white;
             } else if (layout === 'data_highlight') {
-              textY = 0.1; // Narrow header
+              textY = 0.1;
               textColor = theme.white;
             } else if (layout === 'quote_slide') {
-              textColor = theme.primary; // Quote: primary color title
+              textColor = theme.primary;
             } else {
               textY = 0.2;
               textColor = theme.white;
+            }
+          } else {
+            // Normal text handling for pptx generation
+            if (layout === 'title_split' && el.x < 6.66) {
+              textColor = theme.white;
+            } else if (layout === 'content_classic' && el.x < 4.5) {
+              textColor = theme.white;
+            } else if (layout === 'title_classic' || layout === 'end_slide') {
+              if (el.y < theme.coverNavyHeight) textColor = theme.white;
             }
           }
           // Large decorative text (big numbers etc): allow AI color choice
@@ -404,31 +463,41 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
           break;
         }
 
-        case 'table':
-          if (el.rows && el.rows.length > 0) {
-            const tableRows = el.rows.map((row, rowIdx) =>
-              row.map((cell) => ({
-                text: cell,
-                options: {
-                  fontSize: 12,
-                  color: rowIdx === 0 ? theme.white : theme.bodyColor,
-                  align: 'center' as const,
-                  valign: 'middle' as const,
-                  fill: { color: rowIdx === 0 ? theme.primary : (rowIdx % 2 === 0 ? theme.offWhite : theme.white) },
-                  bold: rowIdx === 0,
-                  border: { pt: 0.5, color: 'C0C8D4' },
-                },
-              }))
-            );
-            slide.addTable(tableRows, {
-              x: el.x, y: el.y, w: el.w, h: el.h || 2,
-              border: { pt: 1, color: 'C0C8D4' },
-              colW: el.w / (el.rows[0]?.length || 1),
-              rowH: 0.45,
-              autoPage: true,
-            });
+        case 'table': {
+          try {
+            const safeRows = Array.isArray(el.rows)
+              ? el.rows.filter((r: any) => Array.isArray(r) && r.length > 0)
+              : [];
+            if (safeRows.length > 0 && (el.w || 0) > 0) {
+              const colCount = safeRows[0].length || 1;
+              const tableRows = safeRows.map((row: any, rowIdx: number) =>
+                row.map((cell: any) => ({
+                  text: String(cell ?? ''),
+                  options: {
+                    fontSize: 12,
+                    color: rowIdx === 0 ? theme.white : theme.bodyColor,
+                    align: 'center' as const,
+                    valign: 'middle' as const,
+                    fill: { color: rowIdx === 0 ? theme.primary : (rowIdx % 2 === 0 ? theme.offWhite : theme.white) },
+                    bold: rowIdx === 0,
+                    border: { pt: 0.5, color: 'C0C8D4' },
+                  },
+                }))
+              );
+              slide.addTable(tableRows, {
+                x: el.x || 0, y: el.y || 0, w: el.w, h: el.h || 2,
+                border: { pt: 1, color: 'C0C8D4' },
+                colW: el.w / colCount,
+                rowH: 0.45,
+                autoPage: true,
+              });
+            }
+          } catch (e) {
+            // Skip invalid table elements gracefully
+            console.warn('Skipping invalid table element:', e);
           }
           break;
+        }
 
         case 'image':
           try {
@@ -588,13 +657,17 @@ export default function PptPage() {
     { id: 'training', label: '📚 培训' },
   ];
   const LAYOUT_OPTIONS = [
-    { id: 'auto', label: '自动', desc: 'AI自动选择布局' },
-    { id: 'title_slide', label: '标题', desc: '封面页' },
-    { id: 'content_slide', label: '内容', desc: '图文内容页' },
-    { id: 'card_3col', label: '三栏', desc: '三栏卡片' },
-    { id: 'comparison', label: '对比', desc: '左右对比' },
-    { id: 'data_highlight', label: '数据', desc: '数据突出' },
-    { id: 'timeline', label: '时间线', desc: '流程/时间线' },
+    { id: 'auto', label: '自动', desc: 'AI自动选择' },
+    { id: 'title_classic', label: '经典封面', desc: '上下结构封面' },
+    { id: 'title_center', label: '居中封面', desc: '简约边框居中' },
+    { id: 'title_split', label: '左右封面', desc: '50/50双色划分' },
+    { id: 'content_classic', label: '经典内容', desc: '左侧深色侧边栏' },
+    { id: 'content_top', label: '顶栏内容', desc: '顶部横向深色条' },
+    { id: 'card_3col', label: '三栏卡片', desc: '3列信息块' },
+    { id: 'card_2col', label: '双栏卡片', desc: '2列大信息块' },
+    { id: 'comparison', label: '对比布局', desc: '左右对称比较' },
+    { id: 'data_highlight', label: '数据高亮', desc: '突出核心数据' },
+    { id: 'timeline', label: '时间线', desc: '流程/时间节点' },
   ];
   const activeTheme = THEMES.find(t => t.id === selectedThemeId) || DEFAULT_THEME;
 
@@ -824,32 +897,105 @@ export default function PptPage() {
       const stripMdCodeBlock = (s: string): string => s.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
       const tryParsePpt = (raw: unknown): PptData | null => {
         try {
-          let obj = typeof raw === 'string' ? JSON.parse(stripMdCodeBlock(raw)) : raw;
-          // Deep unwrap: handle multiple nesting levels
-          // e.g. {type:"ppt", content: "{\"type\":\"ppt\",\"content\":{...}}"} — string-in-object
-          // e.g. {type:"ppt", content: {title, slides}} — nested object
-          for (let depth = 0; depth < 5; depth++) {
-            if (obj === null || obj === undefined) return null;
-            if (obj.title && Array.isArray(obj.slides)) return obj as PptData;
-            if (Array.isArray(obj.slides) && obj.slides.length > 0) return obj as PptData;
-            // Unwrap: try obj.content, obj.data, obj.result (may be string or object)
-            const inner = obj.content ?? obj.data ?? obj.result ?? null;
-            if (inner === null) return null;
-            obj = typeof inner === 'string' ? JSON.parse(stripMdCodeBlock(inner)) : inner;
+          let parsedObj: any = null;
+          if (typeof raw === 'string') {
+            let clean = stripMdCodeBlock(raw);
+            // Handle concatenated JSON objects (e.g. AI outputs {"type":"user"...} and {"type":"ppt"...} together)
+            if (clean.match(/\}\s*\{/)) {
+              try {
+                const arr = JSON.parse(`[${clean.replace(/\}\s*\{/g, '},{')}]`);
+                // Prefer PPT data if both exist
+                parsedObj = arr.find((item: any) => item.type === 'ppt' || (item.slides && item.title)) || arr[arr.length - 1];
+              } catch(e) {}
+            }
+            if (!parsedObj) {
+              parsedObj = JSON.parse(clean);
+            }
+          } else {
+            parsedObj = raw;
           }
-          return null;
+
+          // Recursive search: find PptData at any depth
+          const findPptData = (obj: any, depth: number = 0): PptData | null => {
+            if (obj === null || obj === undefined || depth > 8) return null;
+            // Direct match: has title + slides
+            if (obj.title && Array.isArray(obj.slides)) return obj as PptData;
+            // Has slides array even without title
+            if (Array.isArray(obj.slides) && obj.slides.length > 0) return obj as PptData;
+            // Unwrap common wrappers
+            const keys = ['content', 'data', 'result', 'output', 'response', 'body'];
+            for (const key of keys) {
+              if (obj[key] !== undefined && obj[key] !== null) {
+                const inner = typeof obj[key] === 'string' ? (() => { try { return JSON.parse(stripMdCodeBlock(obj[key])); } catch { return null; } })() : obj[key];
+                if (inner) {
+                  const found = findPptData(inner, depth + 1);
+                  if (found) return found;
+                }
+              }
+            }
+            return null;
+          };
+
+          return findPptData(parsedObj);
         } catch { return null; }
       };
 
       // First: try to detect PPT data in any response type
       const detectedPpt = tryParsePpt(resContent);
+      
+      // If we received concatenated data but parsed PPT out of it successfully,
+      // we might want to still show the "user" text if it was asking a question.
+      // But usually just showing the PPT is fine.
       if (detectedPpt) {
-        setPptData(detectedPpt);
+        // Normalize elements: ensure every element has 'content' field
+        // AI may return text in 'text', 'value', 'label', 'body' instead of 'content'
+        const normalizePptData = (data: PptData): PptData => {
+          return {
+            ...data,
+            slides: data.slides.map((slide) => ({
+              ...slide,
+              elements: slide.elements.map((el: any) => {
+                // Normalize content field: AI may use various field names
+                if (el.content === undefined || el.content === null || el.content === '') {
+                  // Try common alternative names, then scan all string fields
+                  el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
+                  // Last resort: find the first string field that isn't a known meta field
+                  if (!el.content) {
+                    const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline']);
+                    for (const key of Object.keys(el)) {
+                      if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
+                        el.content = el[key];
+                        break;
+                      }
+                    }
+                  }
+                }
+                // Normalize kind field: if missing, infer from content
+                if (!el.kind) {
+                  if (el.rows && Array.isArray(el.rows)) {
+                    el.kind = 'table';
+                  } else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) {
+                    el.kind = 'image';
+                  } else if (el.content) {
+                    el.kind = 'text';
+                  } else if (el.fill) {
+                    el.kind = 'shape';
+                  } else {
+                    el.kind = 'text'; // default
+                  }
+                }
+                return el;
+              }),
+            })),
+          };
+        };
+        const normalizedPpt = normalizePptData(detectedPpt);
+        setPptData(normalizedPpt);
         setCurrentSlideIndex(0);
         setSessions((prev) =>
           prev.map((session) => {
             if (session.id === currentSessionId) {
-              return { ...session, pptData: detectedPpt, lastModified: Date.now() };
+              return { ...session, pptData: normalizedPpt, lastModified: Date.now() };
             }
             return session;
           })
@@ -864,13 +1010,78 @@ export default function PptPage() {
           },
         ]);
       } else if (type === 'user') {
-        // AI asks for more info
+        // AI asks for more info or returns data with type='user'
+        // Attempt to clean it up in case it contains concatenated JSON
+        let displayContent = resContent;
+        if (typeof resContent === 'string' && resContent.match(/\}\s*\{/)) {
+          try {
+            const clean = stripMdCodeBlock(resContent);
+            const arr = JSON.parse(`[${clean.replace(/\}\s*\{/g, '},{')}]`);
+            const userMsg = arr.find((item: any) => item.type === 'user');
+            if (userMsg && userMsg.content) displayContent = userMsg.content;
+          } catch(e) {}
+        }
+        // If displayContent is still JSON-like, try to extract meaningful text
+        if (typeof displayContent === 'string' && displayContent.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(stripMdCodeBlock(displayContent));
+            // Check if it's actually PPT data that was missed
+            if (parsed.slides && Array.isArray(parsed.slides)) {
+              // Normalize elements (same logic as main branch)
+              const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline']);
+              const normSlides = parsed.slides.map((s: any) => ({
+                ...s,
+                elements: s.elements?.map((el: any) => {
+                  // Normalize content
+                  if (el.content === undefined || el.content === null || el.content === '') {
+                    el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
+                    if (!el.content) {
+                      for (const key of Object.keys(el)) {
+                        if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
+                          el.content = el[key];
+                          break;
+                        }
+                      }
+                    }
+                  }
+                  // Normalize kind
+                  if (!el.kind) {
+                    if (el.rows && Array.isArray(el.rows)) el.kind = 'table';
+                    else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) el.kind = 'image';
+                    else if (el.content) el.kind = 'text';
+                    else if (el.fill) el.kind = 'shape';
+                    else el.kind = 'text';
+                  }
+                  return el;
+                }) || [],
+              }));
+              const normParsed = { ...parsed, slides: normSlides };
+              displayContent = `✅ PPT 已生成！共 ${normSlides.length} 页，可以预览或下载。`;
+              setPptData(normParsed);
+              setCurrentSlideIndex(0);
+              setSessions((prev) =>
+                prev.map((session) => {
+                  if (session.id === currentSessionId) {
+                    return { ...session, pptData: normParsed, lastModified: Date.now() };
+                  }
+                  return session;
+                })
+              );
+            } else {
+              displayContent = parsed.message || parsed.text || parsed.content || parsed.info || parsed.question || '收到响应。';
+              if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
+            }
+          } catch {
+            // Not valid JSON, show as-is
+          }
+        }
+        
         setMessages((prev) => [
           ...prev,
           {
             id: (Date.now() + 1).toString(),
             role: 'agent',
-            content: resContent,
+            content: typeof displayContent === 'string' ? displayContent : JSON.stringify(displayContent),
             timestamp: Date.now(),
           },
         ]);
@@ -886,13 +1097,28 @@ export default function PptPage() {
           },
         ]);
       } else {
-        // Fallback - treat as text
+        // Fallback - check if content is JSON (shouldn't be shown raw)
+        let displayContent = typeof resContent === 'string' ? resContent : JSON.stringify(resContent);
+        const isJsonLike = typeof displayContent === 'string' && displayContent.trim().startsWith('{') && displayContent.includes('slides');
+        if (isJsonLike) {
+          // Content looks like PPT JSON but couldn't be parsed — still hide it
+          displayContent = '✅ PPT 内容已生成，请查看左侧预览区域。如未显示，请重试。';
+        } else if (typeof displayContent === 'string' && displayContent.trim().startsWith('{')) {
+          // Generic JSON that isn't PPT — try to extract meaningful text
+          try {
+            const parsed = JSON.parse(stripMdCodeBlock(displayContent));
+            displayContent = parsed.message || parsed.text || parsed.content || parsed.info || '收到响应，但格式异常，请重试。';
+            if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
+          } catch {
+            displayContent = '收到响应，但格式异常，请重试。';
+          }
+        }
         setMessages((prev) => [
           ...prev,
           {
             id: (Date.now() + 1).toString(),
             role: 'agent',
-            content: typeof resContent === 'string' ? resContent : JSON.stringify(resContent),
+            content: displayContent,
             timestamp: Date.now(),
           },
         ]);
@@ -979,16 +1205,25 @@ export default function PptPage() {
 
   // Helper: render layout-specific mini decorations for thumbnails
   const renderMiniDecor = (layout: string, slideIdx: number, t: PptTheme) => {
-    const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
-    const isEndSlide = layout === 'end_slide' || slideIdx === (pptData?.slides.length ?? 1) - 1;
     const coverNavyPct = (t.coverNavyHeight / 7.5) * 100;
-    const hdrPct = (t.contentHeaderHeight / 7.5) * 100;
 
-    if (isTitleSlide || isEndSlide) {
+    if (layout === 'title_classic' || layout === 'end_slide') {
       return <>
         <div className="absolute inset-x-0 top-0" style={{ height: `${coverNavyPct}%`, backgroundColor: `#${t.primary}` }} />
         <div className="absolute inset-x-0" style={{ top: `${coverNavyPct}%`, height: '2%', backgroundColor: `#${t.accent}` }} />
         <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'title_center') {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: '4%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '4%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0" style={{ top: '4%', height: '1%', backgroundColor: `#${t.accent}` }} />
+        <div className="absolute inset-x-0" style={{ bottom: '4%', height: '1%', backgroundColor: `#${t.accent}` }} />
+      </>;
+    } else if (layout === 'title_split') {
+      return <>
+        <div className="absolute left-0 top-0 bottom-0 w-1/2" style={{ backgroundColor: `#${t.primary}` }} />
+        <div className="absolute left-1/2 top-0 bottom-0 w-[2%]" style={{ backgroundColor: `#${t.accent}` }} />
       </>;
     } else if (layout === 'card_3col') {
       return <>
@@ -1030,8 +1265,21 @@ export default function PptPage() {
         <div className="absolute" style={{ left:'6%', top:'37%', width:'1%', height:'24%', backgroundColor:`#${t.accent}` }} />
         <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
       </>;
+    } else if (layout === 'card_2col') {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: `${(0.9/7.5)*100}%`, backgroundColor: `#${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'8%', top:'28%', width:'38%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
+        <div className="absolute rounded-sm" style={{ left:'54%', top:'28%', width:'38%', height:'50%', backgroundColor:`#${t.offWhite}`, borderTop:`2px solid #${t.primary}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
+    } else if (layout === 'content_top') {
+      return <>
+        <div className="absolute inset-x-0 top-0" style={{ height: '16%', backgroundColor: `#${t.primary}` }} />
+        <div className="absolute inset-x-0" style={{ top: '16%', height: '2%', backgroundColor: `#${t.accent}` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '5%', backgroundColor: `#${t.primary}` }} />
+      </>;
     } else {
-      // Default content_slide: Left wide band
+      // Default content_classic: Left wide band
       return <>
         <div className="absolute" style={{ left:0, top:0, width:'34%', height:'95%', backgroundColor:`#${t.primary}` }} />
         <div className="absolute" style={{ left:'34%', top:0, width:'0.5%', height:'95%', backgroundColor:`#${t.accent}` }} />
@@ -1074,7 +1322,7 @@ export default function PptPage() {
                   textOverflow: 'ellipsis',
                 }}
               >
-                {el.content.replace(/[•\-]/g, '').trim().slice(0, 30)}
+                {(el.content || '').replace(/[•\-]/g, '').trim().slice(0, 30)}
               </div>
             );
           })}
@@ -1108,27 +1356,35 @@ export default function PptPage() {
 
         // Title color & position logic — varies by layout type
         if (fontSizeNum >= 24) {
-          if (isTitleSlide || isEndSlide) {
-            // Cover/End: title in primary color area, white
+          if (layout === 'title_classic' || layout === 'end_slide') {
             textColor = `#${activeTheme.white}`;
-          } else if (layout === 'content_slide') {
-            // Content slide with left band: title in left band (white), keep AI y position
+          } else if (layout === 'title_center') {
+            textColor = `#${activeTheme.primary}`;
+          } else if (layout === 'title_split') {
             textColor = `#${activeTheme.white}`;
-          } else if (layout === 'card_3col' || layout === 'comparison') {
-            // Card/Comparison: title in short header bar (white)
+          } else if (layout === 'content_classic') {
+            textColor = `#${activeTheme.white}`;
+          } else if (layout === 'content_top') {
+            yPct = (0.25 / 7.5) * 100;
+            textColor = `#${activeTheme.white}`;
+          } else if (layout === 'card_3col' || layout === 'card_2col' || layout === 'comparison') {
             yPct = (0.15 / 7.5) * 100;
             textColor = `#${activeTheme.white}`;
           } else if (layout === 'data_highlight') {
-            // Data highlight: title in narrow header (white)
             yPct = (0.1 / 7.5) * 100;
             textColor = `#${activeTheme.white}`;
           } else if (layout === 'quote_slide') {
-            // Quote: title uses primary color
             textColor = `#${activeTheme.primary}`;
           } else {
-            // Fallback: push to top
             yPct = (0.2 / 7.5) * 100;
             textColor = `#${activeTheme.white}`;
+          }
+        } else {
+          // Normal text handling - fix invisible text
+          if (layout === 'title_split' && xPct < 50) {
+            textColor = `#${activeTheme.white}`; // Left side of split is dark
+          } else if (layout === 'content_classic' && xPct < 34) {
+            textColor = `#${activeTheme.white}`; // Left band is dark
           }
         }
         // Large decorative text (big numbers etc): allow AI color choice
@@ -1156,7 +1412,7 @@ export default function PptPage() {
               whiteSpace: 'pre-wrap',
               paddingTop: el.fontSize && el.fontSize < 22 ? '2px' : '0',
             }}
-            dangerouslySetInnerHTML={{ __html: el.content.replace(/\n/g, '<br/>') }}
+            dangerouslySetInnerHTML={{ __html: (el.content || '').replace(/\n/g, '<br/>') }}
           />
         );
       }
@@ -1221,7 +1477,7 @@ export default function PptPage() {
 
   // Render current slide detail
   // Helper: render a positioned div for theme decoration in preview
-  const renderDecorDiv = (x: number, y: number, w: number, h: number, color: string, key: string) => {
+  const renderDecorDiv = (x: number, y: number, w: number, h: number, color: string, key: string, isCircle = false) => {
     return (
       <div
         key={key}
@@ -1232,6 +1488,7 @@ export default function PptPage() {
           width: `${(w / 13.33) * 100}%`,
           height: `${(h / 7.5) * 100}%`,
           backgroundColor: `#${color}`,
+          borderRadius: isCircle ? '50%' : '0',
         }}
       />
     );
@@ -1240,8 +1497,6 @@ export default function PptPage() {
   // Render theme decorations for preview — layout-specific skeletons
   const renderThemeDecor = (slideData: PptSlide, slideIdx: number) => {
     const layout = inferLayout(slideData, slideIdx, pptData?.slides.length ?? 1);
-    const isTitleSlide = layout === 'title_slide' || slideIdx === 0;
-    const isEndSlide = layout === 'end_slide' || slideIdx === (pptData?.slides.length ?? 1) - 1;
     const t = activeTheme;
     const elements: React.ReactNode[] = [];
 
@@ -1250,12 +1505,24 @@ export default function PptPage() {
     const pctW = (v: number) => (v / 13.33) * 100;
     const pctH = (v: number) => (v / 7.5) * 100;
 
-    if (isTitleSlide || isEndSlide) {
-      // Cover / End
+    if (layout === 'title_classic' || layout === 'end_slide') {
+      // Cover / End Classic
       elements.push(renderDecorDiv(0, 0, 13.33, t.coverNavyHeight, t.primary, 't-top'));
       elements.push(renderDecorDiv(0, t.coverNavyHeight, 13.33, 0.12, t.accent, 't-stripe'));
       elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
-      elements.push(renderDecorDiv(10.5, 0.6, 2.2, 2.2, t.primaryLight, 't-circle'));
+      elements.push(renderDecorDiv(10.5, 0.6, 2.2, 2.2, t.primaryLight, 't-circle', true));
+    } else if (layout === 'title_center') {
+      // Cover Center
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.25, t.primary, 't-top'));
+      elements.push(renderDecorDiv(0, 7.25, 13.33, 0.25, t.primary, 't-bottom'));
+      elements.push(renderDecorDiv(0, 0.25, 13.33, 0.05, t.accent, 't-top-accent'));
+      elements.push(renderDecorDiv(0, 7.2, 13.33, 0.05, t.accent, 't-bot-accent'));
+      elements.push(renderDecorDiv(5.16, 2.25, 3.0, 3.0, t.offWhite, 't-circle', true));
+    } else if (layout === 'title_split') {
+      // Cover Split
+      elements.push(renderDecorDiv(0, 0, 6.66, 7.5, t.primary, 't-left'));
+      elements.push(renderDecorDiv(6.66, 0, 6.67, 7.5, t.offWhite, 't-right'));
+      elements.push(renderDecorDiv(6.66, 0, 0.1, 7.5, t.accent, 't-divider'));
     } else if (layout === 'card_3col') {
       // 3-Column Cards
       elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
@@ -1299,8 +1566,22 @@ export default function PptPage() {
       elements.push(renderDecorDiv(0, 0, 0.8, 7.5, t.primary, 't-leftbar'));
       elements.push(renderDecorDiv(0.8, 2.8, 0.12, 1.8, t.accent, 't-accent'));
       elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+    } else if (layout === 'card_2col') {
+      // 2-Column Cards
+      elements.push(renderDecorDiv(0, 0, 13.33, 0.9, t.primary, 't-header'));
+      elements.push(renderDecorDiv(0, 0.9, 13.33, 0.06, t.accent, 't-accent'));
+      elements.push(renderDecorDiv(1.0, 1.6, 5.0, 5.0, t.offWhite, 't-card1bg'));
+      elements.push(renderDecorDiv(7.33, 1.6, 5.0, 5.0, t.offWhite, 't-card2bg'));
+      elements.push(renderDecorDiv(1.0, 1.6, 5.0, 0.15, t.primary, 't-card1top'));
+      elements.push(renderDecorDiv(7.33, 1.6, 5.0, 0.15, t.primary, 't-card2top'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
+    } else if (layout === 'content_top') {
+      // Content Top Bar
+      elements.push(renderDecorDiv(0, 0, 13.33, 1.2, t.primary, 't-header'));
+      elements.push(renderDecorDiv(0, 1.2, 13.33, 0.08, t.accent, 't-accent'));
+      elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
     } else {
-      // Default content_slide: Left wide color band + right content area
+      // Default content_classic: Left wide color band + right content area
       elements.push(renderDecorDiv(0, 0, 4.5, 7.15, t.primary, 't-leftband'));
       elements.push(renderDecorDiv(4.5, 0, 0.08, 7.15, t.accent, 't-divider'));
       elements.push(renderDecorDiv(0, 7.15, 13.33, 0.35, t.primary, 't-bottom'));
