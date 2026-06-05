@@ -280,6 +280,106 @@ const inferLayout = (slideData: PptSlide, slideIdx: number, totalSlides: number)
   return layout;
 };
 
+/**
+ * Determine if a point (x, y) is on a dark-colored area of the layout decoration.
+ * Returns true if the point falls within a primary-color (dark) decorative region.
+ * This replaces the fragile layout-type-based color logic with position-aware detection.
+ */
+const isOnDarkArea = (x: number, y: number, layout: string, theme: PptTheme): boolean => {
+  // title_classic / end_slide: dark cover area from y=0 to y=coverNavyHeight, dark bottom bar y=7.15..7.5
+  if (layout === 'title_classic' || layout === 'end_slide') {
+    return y < theme.coverNavyHeight || y >= 7.15;
+  }
+  // title_center: dark bars at top 0..0.25 and bottom 7.25..7.5
+  if (layout === 'title_center') {
+    return y < 0.25 || y >= 7.25;
+  }
+  // title_split: left half is dark
+  if (layout === 'title_split') {
+    return x < 6.66;
+  }
+  // content_classic: left band is dark (x=0..4.5), bottom bar
+  if (layout === 'content_classic') {
+    return x < 4.5 || y >= 7.15;
+  }
+  // content_top: dark header y=0..1.2, bottom bar
+  if (layout === 'content_top') {
+    return y < 1.2 || y >= 7.15;
+  }
+  // card_3col: dark header y=0..0.9, bottom bar
+  if (layout === 'card_3col') {
+    return y < 0.9 || y >= 7.15;
+  }
+  // card_2col: dark header y=0..0.9, bottom bar
+  if (layout === 'card_2col') {
+    return y < 0.9 || y >= 7.15;
+  }
+  // comparison: dark header y=0..0.9, bottom bar
+  if (layout === 'comparison') {
+    return y < 0.9 || y >= 7.15;
+  }
+  // timeline: dark left bar x=0..0.5, bottom bar
+  if (layout === 'timeline') {
+    return x < 0.5 || y >= 7.15;
+  }
+  // data_highlight: dark header y=0..0.7, bottom bar
+  if (layout === 'data_highlight') {
+    return y < 0.7 || y >= 7.15;
+  }
+  // quote_slide: dark left bar x=0..0.8
+  if (layout === 'quote_slide') {
+    return x < 0.8;
+  }
+  // Default fallback
+  return false;
+};
+
+/**
+ * Get the safe content area for a layout (elements should be placed within this area).
+ * Returns { x, y, w, h } in slide coordinates.
+ */
+const getSafeContentArea = (layout: string, theme: PptTheme): { x: number; y: number; w: number; h: number } => {
+  const W = 13.33;
+  const H = 7.5;
+  const bottomBar = 0.35; // bottom bar height
+
+  if (layout === 'title_classic' || layout === 'end_slide') {
+    return { x: 0.5, y: 0.8, w: W - 1.0, h: theme.coverNavyHeight - 0.8 };
+  }
+  if (layout === 'title_center') {
+    return { x: 1.0, y: 0.8, w: W - 2.0, h: H - 1.6 };
+  }
+  if (layout === 'title_split') {
+    return { x: 7.2, y: 0.8, w: 5.5, h: H - 1.6 }; // Right side content area
+  }
+  if (layout === 'content_classic') {
+    return { x: 5.0, y: 0.5, w: W - 5.5, h: H - bottomBar - 0.5 };
+  }
+  if (layout === 'content_top') {
+    return { x: 0.5, y: 1.5, w: W - 1.0, h: H - bottomBar - 1.5 };
+  }
+  if (layout === 'card_3col') {
+    return { x: 0.5, y: 1.6, w: W - 1.0, h: H - bottomBar - 1.6 };
+  }
+  if (layout === 'card_2col') {
+    return { x: 1.0, y: 1.6, w: W - 2.0, h: H - bottomBar - 1.6 };
+  }
+  if (layout === 'comparison') {
+    return { x: 0.5, y: 1.5, w: W - 1.0, h: H - bottomBar - 1.5 };
+  }
+  if (layout === 'timeline') {
+    return { x: 0.8, y: 0.5, w: W - 1.3, h: H - bottomBar - 0.5 };
+  }
+  if (layout === 'data_highlight') {
+    return { x: 0.8, y: 1.0, w: W - 1.3, h: H - bottomBar - 1.0 };
+  }
+  if (layout === 'quote_slide') {
+    return { x: 1.5, y: 1.0, w: W - 2.0, h: H - bottomBar - 1.0 };
+  }
+  // Default: entire slide minus small margins
+  return { x: 0.5, y: 0.5, w: W - 1.0, h: H - bottomBar - 0.5 };
+};
+
 const generatePptx = (data: PptData, theme: PptTheme) => {
   const pres = new pptxgen();
   pres.title = data.title;
@@ -401,47 +501,23 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
     slideData.elements.forEach((el) => {
       if (el.kind === 'shape') return;
 
+      // Safe content area clamping (shared by all element types)
+      const safe = getSafeContentArea(layout, theme);
+
       switch (el.kind) {
         case 'text': {
-          let textY = el.y || 0;
           const textFontSize = el.fontSize || 18;
-          let textColor = theme.bodyColor; // Default: use theme body color
+          const elX = Math.max(safe.x, Math.min(el.x || 0, safe.x + safe.w - (el.w || 2)));
+          const elY = Math.max(safe.y, Math.min(el.y || 0, safe.y + safe.h - (el.h || 1)));
+          // Position-aware color detection
+          const elCenterX = elX + (el.w || 4) / 2;
+          const elCenterY = elY + (el.h || 1) / 2;
+          const onDark = isOnDarkArea(elCenterX, elCenterY, layout, theme);
+          let textColor = onDark ? theme.white : theme.bodyColor;
 
-          // Title color & position logic — varies by layout type
+          // Title text (fontSize >= 24) gets primary color on light areas
           if (textFontSize >= 24) {
-            if (layout === 'title_classic' || layout === 'end_slide') {
-              textColor = theme.white;
-            } else if (layout === 'title_center') {
-              textColor = theme.primary;
-            } else if (layout === 'title_split') {
-              // Usually left aligned in the primary box
-              textColor = theme.white;
-            } else if (layout === 'content_classic') {
-              textColor = theme.white;
-            } else if (layout === 'content_top') {
-              textY = 0.25;
-              textColor = theme.white;
-            } else if (layout === 'card_3col' || layout === 'card_2col' || layout === 'comparison') {
-              textY = 0.15;
-              textColor = theme.white;
-            } else if (layout === 'data_highlight') {
-              textY = 0.1;
-              textColor = theme.white;
-            } else if (layout === 'quote_slide') {
-              textColor = theme.primary;
-            } else {
-              textY = 0.2;
-              textColor = theme.white;
-            }
-          } else {
-            // Normal text handling for pptx generation
-            if (layout === 'title_split' && el.x < 6.66) {
-              textColor = theme.white;
-            } else if (layout === 'content_classic' && el.x < 4.5) {
-              textColor = theme.white;
-            } else if (layout === 'title_classic' || layout === 'end_slide') {
-              if (el.y < theme.coverNavyHeight) textColor = theme.white;
-            }
+            textColor = onDark ? theme.white : theme.primary;
           }
           // Large decorative text (big numbers etc): allow AI color choice
           if (el.color && textFontSize >= 30) {
@@ -466,8 +542,8 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
           });
 
           slide.addText(textParts, {
-            x: el.x,
-            y: textY,
+            x: elX,
+            y: elY,
             w: el.w,
             h: el.h,
             fill: el.fill ? { color: el.fill } : undefined,
@@ -481,6 +557,8 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
 
         case 'table': {
           try {
+            const tblX = Math.max(safe.x, el.x || 0);
+            const tblY = Math.max(safe.y, el.y || 0);
             const safeRows = Array.isArray(el.rows)
               ? el.rows.filter((r: any) => Array.isArray(r) && r.length > 0)
               : [];
@@ -501,7 +579,7 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
                 }))
               );
               slide.addTable(tableRows, {
-                x: el.x || 0, y: el.y || 0, w: el.w, h: el.h || 2,
+                x: tblX, y: tblY, w: el.w, h: el.h || 2,
                 border: { pt: 1, color: 'C0C8D4' },
                 colW: el.w / colCount,
                 rowH: 0.45,
@@ -517,15 +595,18 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
 
         case 'image':
           try {
-            slide.addImage({ path: el.content, x: el.x, y: el.y, w: el.w, h: el.h });
+            const imgX = Math.max(safe.x, el.x || 0);
+            const imgY = Math.max(safe.y, el.y || 0);
+            slide.addImage({ path: el.content, x: imgX, y: imgY, w: el.w, h: el.h });
           } catch { /* skip */ }
           break;
 
         case 'icon': {
-          // Render emoji/icon as text in pptx
           const iconFontSize = el.fontSize || 32;
+          const iconX = Math.max(safe.x, el.x || 0);
+          const iconY = Math.max(safe.y, el.y || 0);
           slide.addText(el.icon || el.content || '●', {
-            x: el.x, y: el.y, w: el.w, h: el.h,
+            x: iconX, y: iconY, w: el.w, h: el.h,
             fontSize: iconFontSize,
             color: el.color || theme.primary,
             align: 'center',
@@ -535,34 +616,34 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
         }
 
         case 'divider': {
-          // Render divider as a thin rectangle
           const isH = (el.w || 0) > (el.h || 0);
+          const divX = Math.max(safe.x, el.x || 0);
+          const divY = Math.max(safe.y, el.y || 0);
           if (isH) {
-            addRect(el.x || 0, el.y || 0, el.w || 1, el.thickness || 0.04, el.color || 'AAAAAA');
+            addRect(divX, divY, el.w || 1, el.thickness || 0.04, el.color || 'AAAAAA');
           } else {
-            addRect(el.x || 0, el.y || 0, el.thickness || 0.04, el.h || 1, el.color || 'AAAAAA');
+            addRect(divX, divY, el.thickness || 0.04, el.h || 1, el.color || 'AAAAAA');
           }
           break;
         }
 
         case 'bullet': {
-          // Render bullet: number circle + text
           const bulletFontSize = el.fontSize || 16;
           const numSize = Math.max(10, bulletFontSize * 0.65);
-          // Number circle as a small colored shape + white number text
           const circleW = 0.45;
-          addCircle(el.x || 0, el.y || 0, circleW, circleW, el.fill || theme.primary);
+          const bulX = Math.max(safe.x, el.x || 0);
+          const bulY = Math.max(safe.y, el.y || 0);
+          addCircle(bulX, bulY, circleW, circleW, el.fill || theme.primary);
           slide.addText(String(el.number ?? 1), {
-            x: el.x || 0, y: el.y || 0, w: circleW, h: circleW,
+            x: bulX, y: bulY, w: circleW, h: circleW,
             fontSize: numSize,
             color: theme.white,
             bold: true,
             align: 'center',
             valign: 'middle',
           });
-          // Text content next to the circle
           slide.addText(el.content || '', {
-            x: (el.x || 0) + circleW + 0.15, y: el.y || 0, w: (el.w || 5) - circleW - 0.15, h: el.h || 0.6,
+            x: bulX + circleW + 0.15, y: bulY, w: (el.w || 5) - circleW - 0.15, h: el.h || 0.6,
             fontSize: bulletFontSize,
             color: el.color || theme.bodyColor,
             bold: el.bold || false,
@@ -1367,8 +1448,18 @@ export default function PptPage() {
           .slice(0, 3)
           .map((el, i) => {
             const isTitle = (el.fontSize || 0) >= 24;
+            // Use safe-area clamped position for color detection
+            const safe = getSafeContentArea(layout, t);
+            const elX = Math.max(safe.x, Math.min(el.x || 0, safe.x + safe.w - (el.w || 2)));
+            const elY = Math.max(safe.y, Math.min(el.y || 0, safe.y + safe.h - (el.h || 1)));
+            const elCenterX = elX + (el.w || 4) / 2;
+            const elCenterY = elY + (el.h || 1) / 2;
+            const onDark = isOnDarkArea(elCenterX, elCenterY, layout, t);
             const yPct = (el.y || 0) / 7.5 * 100;
             const hPct = Math.max(8, (el.h || 1) / 7.5 * 100);
+            // Position-aware color for thumbnails
+            let miniColor = onDark ? `#${t.white}` : `#${t.bodyColor}`;
+            if (isTitle && !onDark) miniColor = `#${t.primary}`;
             return (
               <div
                 key={i}
@@ -1378,7 +1469,7 @@ export default function PptPage() {
                   right: '6%',
                   top: `${Math.min(yPct, 85)}%`,
                   height: `${hPct}%`,
-                  color: isTitle ? `#${t.titleColor}` : `#${t.bodyColor}`,
+                  color: miniColor,
                   fontSize: isTitle ? '3px' : '2px',
                   fontWeight: isTitle ? 'bold' : 'normal',
                   lineHeight: 1.2,
@@ -1408,52 +1499,37 @@ export default function PptPage() {
 
     return filteredElements.map((el, idx) => {
 
-      const xPct = ((el.x || 0) / 13.33) * 100;
-      let yPct = ((el.y || 0) / 7.5) * 100;
+      // Clamp element positions to safe content area to prevent overlap with decorations
+      const safe = getSafeContentArea(layout, activeTheme);
+      const elX = Math.max(safe.x, Math.min(el.x || 0, safe.x + safe.w - (el.w || 2)));
+      const elY = Math.max(safe.y, Math.min(el.y || 0, safe.y + safe.h - (el.h || 1)));
+
+      const xPct = (elX / 13.33) * 100;
+      const yPct = (elY / 7.5) * 100;
       const wPct = ((el.w || 4) / 13.33) * 100;
       const hPct = ((el.h || 1) / 7.5) * 100;
 
       if (el.kind === 'text') {
         const fontSizeNum = el.fontSize || 18;
         let fontSize = Math.max(8, fontSizeNum * 0.7);
-        let textColor = `#${activeTheme.bodyColor}`; // Default: use theme body color
+        // Position-aware color detection: check if element center is on a dark area
+        const elCenterX = elX + (el.w || 4) / 2;
+        const elCenterY = elY + (el.h || 1) / 2;
+        const onDark = isOnDarkArea(elCenterX, elCenterY, layout, activeTheme);
+        let textColor = onDark ? `#${activeTheme.white}` : `#${activeTheme.bodyColor}`;
 
-        // Title color & position logic — varies by layout type
+        // Title text (fontSize >= 24) gets special treatment for emphasis
         if (fontSizeNum >= 24) {
-          if (layout === 'title_classic' || layout === 'end_slide') {
+          if (onDark) {
             textColor = `#${activeTheme.white}`;
-          } else if (layout === 'title_center') {
-            textColor = `#${activeTheme.primary}`;
-          } else if (layout === 'title_split') {
-            textColor = `#${activeTheme.white}`;
-          } else if (layout === 'content_classic') {
-            textColor = `#${activeTheme.white}`;
-          } else if (layout === 'content_top') {
-            yPct = (0.25 / 7.5) * 100;
-            textColor = `#${activeTheme.white}`;
-          } else if (layout === 'card_3col' || layout === 'card_2col' || layout === 'comparison') {
-            yPct = (0.15 / 7.5) * 100;
-            textColor = `#${activeTheme.white}`;
-          } else if (layout === 'data_highlight') {
-            yPct = (0.1 / 7.5) * 100;
-            textColor = `#${activeTheme.white}`;
-          } else if (layout === 'quote_slide') {
-            textColor = `#${activeTheme.primary}`;
           } else {
-            yPct = (0.2 / 7.5) * 100;
-            textColor = `#${activeTheme.white}`;
-          }
-        } else {
-          // Normal text handling - fix invisible text
-          if (layout === 'title_split' && xPct < 50) {
-            textColor = `#${activeTheme.white}`; // Left side of split is dark
-          } else if (layout === 'content_classic' && xPct < 34) {
-            textColor = `#${activeTheme.white}`; // Left band is dark
+            // On light area: use primary color for titles
+            textColor = `#${activeTheme.primary}`;
           }
         }
         // Large decorative text (big numbers etc): allow AI color choice
         if (el.color && fontSizeNum >= 30) {
-          textColor = `#${el.color}`; // Large decorative text: respect AI color choice
+          textColor = `#${el.color}`;
         }
 
         return (
