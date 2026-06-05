@@ -48,6 +48,11 @@ const Icons = {
       <path d="M15 22v-3"></path>
     </svg>
   ),
+  Square: ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
+    </svg>
+  ),
   Download: ({ className }: { className?: string }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -425,6 +430,22 @@ export default function Home() {
     }
   };
 
+  const handleStopStream = () => {
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+      streamAbortRef.current = null;
+    }
+    setIsSending(false);
+    setStreamPhase('');
+    setStreamProgress('');
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      role: 'agent',
+      content: '⚠️ 已停止生成。',
+      timestamp: Date.now()
+    }]);
+  };
+
   const performSendMessage = async (displayContent: string, apiContent: string) => {
     if (!selectedAgentId) {
       setMessages(prev => [...prev, {
@@ -436,6 +457,8 @@ export default function Home() {
       setIsSending(false);
       return;
     }
+
+    setIsSending(true);
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -655,6 +678,7 @@ export default function Home() {
                 };
                 setMessages(prev => [...prev, noContentMsg]);
               }
+              setStreamPhase('done');
               break;
             }
           }
@@ -669,6 +693,9 @@ export default function Home() {
             timestamp: Date.now()
           };
           setMessages(prev => [...prev, errorMsg]);
+          setIsSending(false);
+          setStreamPhase('');
+          setStreamProgress('');
         },
         // onComplete
         () => {
@@ -755,8 +782,10 @@ export default function Home() {
   };
 
   const quickActions = [
-    { label: '绘制h5端登录流程图', text: '请帮我绘制一个H5端的登录流程图，包含用户输入手机号、获取验证码、验证登录等步骤。' },
-    { label: '绘制电商购物流程图', text: '请帮我绘制一个电商购物流程图，包含商品浏览、加入购物车、下单、支付、发货等环节。' }
+    { label: 'UML类图', text: '请帮我绘制一个电商系统的UML类图，包含用户、订单、商品等类。' },
+    { label: '时序图', text: '请帮我绘制一个用户登录注册的时序图，包含客户端、网关、认证服务、数据库。' },
+    { label: '架构图', text: '请帮我绘制一个微服务系统架构图，包含接入层、业务逻辑层和数据层。' },
+    { label: '业务流程图', text: '请帮我绘制一个电商购物流程图，包含商品浏览、加入购物车、下单、支付、发货等环节。' }
   ];
 
   return (
@@ -1012,30 +1041,31 @@ export default function Home() {
             ))}
 
             {/* Stream Progress Indicator */}
-            {isSending && streamProgress && (
+            {isSending && (
               <div className="flex gap-3 flex-row">
                 <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white bg-white text-indigo-500 border border-slate-100">
                   <Icons.Bot className="w-5 h-5" />
                 </div>
-                <div className="flex flex-col max-w-[85%]">
+                <div className="flex flex-col max-w-[85%] w-full">
                   <span className="text-[10px] mb-1.5 font-medium text-left text-slate-400">Agent</span>
-                  <div className="p-3.5 text-sm leading-relaxed shadow-sm bg-white border border-indigo-100 text-indigo-700 rounded-2xl rounded-tl-sm">
+                  <div className="p-3.5 text-sm leading-relaxed shadow-sm bg-white border border-indigo-100 text-indigo-700 rounded-2xl rounded-tl-sm w-full">
                     <div className="flex items-center gap-2">
                       <div className="flex gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                       </div>
-                      <span>{streamProgress}</span>
+                      <span className="font-semibold">{streamProgress || 'AI 正在分析需求...'}</span>
                     </div>
                     {/* Phase progress bar */}
-                    <div className="mt-2 w-full bg-slate-100 rounded-full h-1 overflow-hidden">
+                    <div className="mt-3 w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                       <div 
                         className="h-full bg-gradient-to-r from-indigo-400 to-purple-500 rounded-full transition-all duration-500 ease-out"
                         style={{ 
                           width: streamPhase === 'analyzing' ? '25%' : 
                                  streamPhase === 'drawing' ? '60%' : 
-                                 streamPhase === 'reviewing' ? '85%' : '10%' 
+                                 streamPhase === 'reviewing' ? '85%' : 
+                                 streamPhase === 'done' ? '100%' : '10%' 
                         }}
                       />
                     </div>
@@ -1055,7 +1085,10 @@ export default function Home() {
                 {quickActions.map((action, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setInputValue(action.text)}
+                    onClick={() => {
+                      setInputValue('');
+                      performSendMessage(action.text, action.text);
+                    }}
                     className="text-xs px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 transition-colors border border-indigo-100 font-medium shadow-sm"
                   >
                     {action.label}
@@ -1088,30 +1121,42 @@ export default function Home() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isSending ? (streamProgress || "AI 正在思考中...") : "输入您的问题，描述您的需求..."}
+                placeholder={isSending ? (streamProgress || "AI 正在生成中...") : "输入您的问题，描述您的需求..."}
                 disabled={isSending}
-                className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-60 min-h-[50px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent"
+                className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-60 min-h-[50px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 rows={1}
                 style={{ height: 'auto', minHeight: '50px' }}
               />
               <div className="flex gap-1 mb-0.5 shrink-0">
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={!inputValue.trim() || isSending}
-                    className={`
-                      p-2.5 rounded-lg transition-all duration-200 flex items-center justify-center
-                      ${inputValue.trim() && !isSending
-                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 active:scale-95' 
-                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                      }
-                    `}
-                  >
-                    {isSending ? <Icons.Loader className="w-4 h-4" /> : <Icons.Send className="w-4 h-4" />}
-                  </button>
+                  {isSending ? (
+                    <button
+                      onClick={handleStopStream}
+                      className="p-2.5 rounded-lg transition-all duration-200 flex items-center justify-center bg-red-100 text-red-600 hover:bg-red-200 shadow-sm"
+                      title="停止生成"
+                    >
+                      <Icons.Square className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!inputValue.trim()}
+                      className={`
+                        p-2.5 rounded-lg transition-all duration-200 flex items-center justify-center
+                        ${inputValue.trim()
+                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 active:scale-95' 
+                          : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        }
+                      `}
+                      title="发送消息"
+                    >
+                      <Icons.Send className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     onClick={handleRestartSession}
-                    className="p-2.5 rounded-lg bg-white text-slate-400 hover:bg-slate-50 hover:text-indigo-600 transition-all duration-200 border border-slate-200 hover:border-indigo-100 shadow-sm"
-                    title="Restart Session"
+                    disabled={isSending}
+                    className="p-2.5 rounded-lg bg-white text-slate-400 hover:bg-slate-50 hover:text-indigo-600 transition-all duration-200 border border-slate-200 hover:border-indigo-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="重启对话"
                   >
                     <Icons.Plus className="w-4 h-4" />
                   </button>

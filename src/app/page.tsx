@@ -22,6 +22,61 @@ export default function Lobby() {
     router.push('/login');
   };
 
+  const historyWorks = [
+    {
+      id: '1',
+      title: '电商系统微服务架构图',
+      type: 'drawio',
+      tags: ['架构图', '微服务'],
+      updatedAt: '10 分钟前',
+      bg: 'bg-gradient-to-br from-blue-500/20 to-purple-500/20',
+      icon: (
+        <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+      )
+    },
+    {
+      id: '2',
+      title: 'Q3季度研发总结汇报',
+      type: 'ppt',
+      tags: ['总结', '数据'],
+      updatedAt: '2 小时前',
+      bg: 'bg-gradient-to-br from-orange-500/20 to-red-500/20',
+      icon: (
+        <svg className="w-8 h-8 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+        </svg>
+      )
+    },
+    {
+      id: '3',
+      title: '用户登录注册时序图',
+      type: 'drawio',
+      tags: ['时序图', '业务'],
+      updatedAt: '昨天',
+      bg: 'bg-gradient-to-br from-emerald-500/20 to-teal-500/20',
+      icon: (
+        <svg className="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+        </svg>
+      )
+    },
+    {
+      id: '4',
+      title: '新人入职培训课件',
+      type: 'ppt',
+      tags: ['培训', '企业文化'],
+      updatedAt: '3天前',
+      bg: 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20',
+      icon: (
+        <svg className="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        </svg>
+      )
+    }
+  ];
+
   const workspaces = [
     {
       id: 'drawio',
@@ -156,8 +211,58 @@ export default function Lobby() {
             ))}
           </div>
 
+          {/* History Works */}
+          <div className="mt-16">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-[rgba(255,255,255,0.92)]">最近创作</h2>
+              <button className="text-sm text-[rgba(255,255,255,0.5)] hover:text-white transition-colors">查看全部 &rarr;</button>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {historyWorks.map((work) => (
+                <div 
+                  key={work.id}
+                  onClick={() => router.push(`/${work.type}?id=${work.id}`)}
+                  className="group cursor-pointer rounded-xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.05)] hover:border-[rgba(255,255,255,0.2)] transition-all overflow-hidden"
+                >
+                  {/* Thumbnail area */}
+                  <div className={`h-32 ${work.bg} flex items-center justify-center border-b border-[rgba(255,255,255,0.05)] relative`}>
+                    <div className="group-hover:scale-110 transition-transform duration-500">
+                      {work.icon}
+                    </div>
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <span className="px-3 py-1.5 bg-white/20 backdrop-blur-md rounded-lg text-xs font-medium text-white shadow-lg">
+                        点击打开
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Info area */}
+                  <div className="p-4">
+                    <h4 className="text-sm font-medium text-[rgba(255,255,255,0.9)] mb-1 truncate group-hover:text-blue-400 transition-colors">
+                      {work.title}
+                    </h4>
+                    <div className="flex items-center justify-between mt-2">
+                      <div className="flex items-center gap-1">
+                        {work.tags.slice(0, 1).map(tag => (
+                          <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-[rgba(255,255,255,0.1)] text-[rgba(255,255,255,0.6)]">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      <span className="text-[10px] text-[rgba(255,255,255,0.4)]">
+                        {work.updatedAt}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Footer hint */}
-          <p className="text-center text-[11px] text-[rgba(255,255,255,0.3)] mt-10">
+          <p className="text-center text-[11px] text-[rgba(255,255,255,0.3)] mt-16">
             AI Agent Scaffold · @小傅哥 · 更多工具持续接入中…
           </p>
         </div>
