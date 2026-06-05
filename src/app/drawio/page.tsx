@@ -6,12 +6,15 @@ import { useRouter } from 'next/navigation';
 import { getUserInfo, clearUserInfo } from '@/utils/cookie';
 import { agentApi, StreamEvent, DrawioNodeChunk, DrawioEdgeChunk, DrawioDoneChunk, DrawioLegacyChunk, UserChunk, StatusChunk, ErrorChunk } from '@/api/agent';
 import { AiAgentConfigResponseDTO } from '@/types/api';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // Message type definition
 type Message = {
   id: string;
   role: 'user' | 'agent';
   content: string;
+  reasoning?: string;
   timestamp: number;
 };
 
@@ -466,7 +469,17 @@ export default function Home() {
       content: displayContent,
       timestamp: Date.now()
     };
-    setMessages(prev => [...prev, userMsg]);
+    
+    const agentMsgId = Date.now().toString() + '-agent';
+    const initialAgentMsg: Message = {
+      id: agentMsgId,
+      role: 'agent',
+      content: '',
+      reasoning: '',
+      timestamp: Date.now()
+    };
+
+    setMessages(prev => [...prev, userMsg, initialAgentMsg]);
 
     try {
       // 1. Ensure Session
@@ -498,6 +511,9 @@ export default function Home() {
       let receivedDrawioDone = false;
       let accumulatedNodes: string[] = []; // To hold incrementally added nodes
       let accumulatedEdges: string[] = []; // To hold incrementally added edges
+      
+      let accumulatedReasoning = '';
+      let accumulatedContent = '';
 
       const controller = await agentApi.chatStream(
         {
@@ -534,7 +550,7 @@ export default function Home() {
 
               hasIncrementalContent = true;
               nodeCount++;
-              setStreamProgress(`${phaseLabel[phase] || phase} · 添加节点 #${nodeCount}: ${chunk.label}`);
+              setStreamProgress(`添加节点 #${nodeCount}: ${chunk.label}`);
 
               accumulatedNodes.push(chunk.xml);
 
@@ -554,7 +570,7 @@ export default function Home() {
             case 'drawio_edge': {
               hasIncrementalContent = true;
               edgeCount++;
-              setStreamProgress(`${phaseLabel[phase] || phase} · 添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
+              setStreamProgress(`添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
 
               accumulatedEdges.push(chunk.xml);
 
@@ -629,54 +645,36 @@ export default function Home() {
 
             case 'user': {
               // AI returns a text response (not a diagram)
-              agentTextContent = chunk.content;
-              const userResponseMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'agent',
-                content: chunk.content,
-                timestamp: Date.now()
-              };
-              setMessages(prev => [...prev, userResponseMsg]);
+              agentTextContent += chunk.content;
+              accumulatedContent += chunk.content;
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
               break;
             }
 
             case 'status': {
               // Intermediate status message
-              setStreamProgress(`${phaseLabel[phase] || phase} · ${chunk.content}`);
+              if (chunk.content && chunk.content.trim() !== '}') {
+                 accumulatedReasoning += chunk.content;
+                 setStreamProgress(chunk.content.substring(0, 50) + '...');
+                 setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, reasoning: accumulatedReasoning } : m));
+              }
               break;
             }
 
             case 'error': {
-              const errorMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'agent',
-                content: `❌ ${chunk.content}`,
-                timestamp: Date.now()
-              };
-              setMessages(prev => [...prev, errorMsg]);
+              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ ${chunk.content}`;
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
               break;
             }
 
             case 'done': {
               // Stream completed
-              // Add completion message only once at the very end of the stream
               if (receivedDrawioDone) {
-                const doneMsg: Message = {
-                  id: (Date.now() + 1).toString(),
-                  role: 'agent',
-                  content: `✅ 图表已生成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`,
-                  timestamp: Date.now()
-                };
-                setMessages(prev => [...prev, doneMsg]);
+                accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ 图表已生成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`;
+                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
               } else if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
-                // No content received at all
-                const noContentMsg: Message = {
-                  id: (Date.now() + 1).toString(),
-                  role: 'agent',
-                  content: '⚠️ 未收到有效响应，请重试。',
-                  timestamp: Date.now()
-                };
-                setMessages(prev => [...prev, noContentMsg]);
+                accumulatedContent += (accumulatedContent ? '\n\n' : '') + `⚠️ 未收到有效响应，请重试。`;
+                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
               }
               setStreamPhase('done');
               break;
@@ -686,13 +684,8 @@ export default function Home() {
         // onError
         (error: Error) => {
           console.error('Stream error:', error);
-          const errorMsg: Message = {
-            id: (Date.now() + 1).toString(),
-            role: 'agent',
-            content: `❌ 连接异常: ${error.message}`,
-            timestamp: Date.now()
-          };
-          setMessages(prev => [...prev, errorMsg]);
+          accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ 连接异常: ${error.message}`;
+          setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
           setIsSending(false);
           setStreamPhase('');
           setStreamProgress('');
@@ -709,13 +702,12 @@ export default function Home() {
 
     } catch (error) {
       console.error('Chat error:', error);
-      const errorMsg: Message = {
-        id: (Date.now() + 1).toString(),
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
         role: 'agent',
         content: error instanceof Error ? `Error: ${error.message}` : '发送失败，请重试。',
         timestamp: Date.now()
-      };
-      setMessages(prev => [...prev, errorMsg]);
+      }]);
       setIsSending(false);
       setStreamPhase('');
       setStreamProgress('');
@@ -1006,69 +998,89 @@ export default function Home() {
 
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-5 space-y-6 bg-slate-50/50 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
-            {messages.map((msg, index) => (
-              <div 
-                key={`${msg.id}-${index}`} 
-                className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
-              >
-                <div className={`
-                  shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white
-                  ${msg.role === 'user' 
-                    ? 'bg-indigo-100 text-indigo-600' 
-                    : 'bg-white text-indigo-500 border border-slate-100'
-                  }
-                `}>
-                  {msg.role === 'user' ? <Icons.User className="w-5 h-5" /> : <Icons.Bot className="w-5 h-5" />}
+            {messages.map((msg, index) => {
+              return (
+                <div 
+                  key={`${msg.id}-${index}`} 
+                  className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                >
+                  <div className={`
+                    shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white
+                    ${msg.role === 'user' 
+                      ? 'bg-indigo-100 text-indigo-600' 
+                      : 'bg-white text-indigo-500 border border-slate-100'
+                    }
+                  `}>
+                    {msg.role === 'user' ? <Icons.User className="w-5 h-5" /> : <Icons.Bot className="w-5 h-5" />}
+                  </div>
+                  
+                  <div className="flex flex-col max-w-[85%] w-full">
+                      <span className={`text-[10px] mb-1.5 font-medium ${msg.role === 'user' ? 'text-right text-slate-400' : 'text-left text-slate-400'}`}>
+                          {msg.role === 'user' ? 'You' : 'Agent'}
+                      </span>
+                      
+                      <div className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        {/* Reasoning Block */}
+                        {msg.role === 'agent' && msg.reasoning && (
+                          <details className="w-full max-w-full group/details open:pb-2">
+                            <summary className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700 font-medium select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm transition-all hover:border-slate-300">
+                               <Icons.Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                               <span className="group-open/details:hidden">展开思考过程</span>
+                               <span className="hidden group-open/details:inline">收起思考过程</span>
+                            </summary>
+                            <div className="mt-2 p-4 bg-white border border-slate-200 rounded-xl shadow-sm text-sm text-slate-600 prose prose-sm prose-slate max-w-none overflow-x-auto">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.reasoning}</ReactMarkdown>
+                            </div>
+                          </details>
+                        )}
+
+                        {/* Content Block */}
+                        {msg.content && (
+                          <div 
+                            className={`
+                                p-3.5 text-sm leading-relaxed shadow-sm whitespace-pre-wrap w-fit
+                                ${msg.role === 'user' 
+                                ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-indigo-200' 
+                                : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm shadow-sm prose prose-sm prose-slate max-w-none overflow-x-auto'
+                                }
+                            `}
+                          >
+                            {msg.role === 'user' ? (
+                               msg.content
+                            ) : (
+                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Empty state while generating */}
+                        {msg.role === 'agent' && !msg.content && !msg.reasoning && isSending && (
+                           <div className="flex gap-1 items-center px-4 py-3 text-sm shadow-sm bg-white border border-indigo-100 text-indigo-600 rounded-2xl rounded-tl-sm">
+                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                           </div>
+                        )}
+                      </div>
+                  </div>
                 </div>
-                
-                <div className="flex flex-col max-w-[85%]">
-                    <span className={`text-[10px] mb-1.5 font-medium ${msg.role === 'user' ? 'text-right text-slate-400' : 'text-left text-slate-400'}`}>
-                        {msg.role === 'user' ? 'You' : 'Agent'}
-                    </span>
-                    <div 
-                    className={`
-                        p-3.5 text-sm leading-relaxed shadow-sm whitespace-pre-wrap
-                        ${msg.role === 'user' 
-                        ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-indigo-200' 
-                        : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm shadow-sm'
-                        }
-                    `}
-                    >
-                    {msg.content}
-                    </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
 
             {/* Stream Progress Indicator */}
-            {isSending && (
-              <div className="flex gap-3 flex-row">
-                <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white bg-white text-indigo-500 border border-slate-100">
+            {isSending && streamPhase !== 'done' && (
+              <div className="flex gap-3 flex-row animate-in fade-in duration-300">
+                <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white bg-white text-indigo-500 border border-slate-100 opacity-50">
                   <Icons.Bot className="w-5 h-5" />
                 </div>
-                <div className="flex flex-col max-w-[85%] w-full">
-                  <span className="text-[10px] mb-1.5 font-medium text-left text-slate-400">Agent</span>
-                  <div className="p-3.5 text-sm leading-relaxed shadow-sm bg-white border border-indigo-100 text-indigo-700 rounded-2xl rounded-tl-sm w-full">
-                    <div className="flex items-center gap-2">
-                      <div className="flex gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                      </div>
-                      <span className="font-semibold">{streamProgress || 'AI 正在分析需求...'}</span>
+                <div className="flex flex-col max-w-[85%]">
+                  <div className="px-4 py-3 text-sm shadow-sm bg-white border border-indigo-100 text-indigo-600 rounded-2xl rounded-tl-sm flex items-center gap-3">
+                    <div className="flex gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                     </div>
-                    {/* Phase progress bar */}
-                    <div className="mt-3 w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                      <div 
-                        className="h-full bg-gradient-to-r from-indigo-400 to-purple-500 rounded-full transition-all duration-500 ease-out"
-                        style={{ 
-                          width: streamPhase === 'analyzing' ? '25%' : 
-                                 streamPhase === 'drawing' ? '60%' : 
-                                 streamPhase === 'reviewing' ? '85%' : 
-                                 streamPhase === 'done' ? '100%' : '10%' 
-                        }}
-                      />
-                    </div>
+                    <span className="font-medium text-xs truncate max-w-[200px]">{streamProgress || '正在处理中...'}</span>
                   </div>
                 </div>
               </div>
