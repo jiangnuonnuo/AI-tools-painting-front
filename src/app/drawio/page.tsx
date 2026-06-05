@@ -473,7 +473,8 @@ export default function Home() {
       let finalXml = '';
       let agentTextContent = ''; // For non-drawio user-type responses
       let receivedDrawioDone = false;
-      let accumulatedCells: string[] = []; // To hold incrementally added cells
+      let accumulatedNodes: string[] = []; // To hold incrementally added nodes
+      let accumulatedEdges: string[] = []; // To hold incrementally added edges
 
       const controller = await agentApi.chatStream(
         {
@@ -499,16 +500,26 @@ export default function Home() {
 
           switch (chunk.type) {
             case 'drawio_node': {
+              // If a previous agent already finished drawing, and a new agent (like reviewer) starts drawing again, reset accumulators
+              if (receivedDrawioDone) {
+                accumulatedNodes = [];
+                accumulatedEdges = [];
+                nodeCount = 0;
+                edgeCount = 0;
+                receivedDrawioDone = false;
+              }
+
               hasIncrementalContent = true;
               nodeCount++;
               setStreamProgress(`${phaseLabel[phase] || phase} · 添加节点 #${nodeCount}: ${chunk.label}`);
 
-              accumulatedCells.push(chunk.xml);
+              accumulatedNodes.push(chunk.xml);
 
               // Incrementally load the accumulated cells into draw.io
               if (drawioRef.current && currentSessionId === currentSessionRef.current) {
                 try {
-                  const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedCells.join('')}</root></mxGraphModel>`;
+                  // Ensure nodes are placed before edges in the XML structure
+                  const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedNodes.join('')}${accumulatedEdges.join('')}</root></mxGraphModel>`;
                   drawioRef.current.load({ xml: loadXml });
                 } catch (e) {
                   console.error('Failed to load node:', e);
@@ -522,12 +533,13 @@ export default function Home() {
               edgeCount++;
               setStreamProgress(`${phaseLabel[phase] || phase} · 添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
 
-              accumulatedCells.push(chunk.xml);
+              accumulatedEdges.push(chunk.xml);
 
               // Incrementally load the accumulated cells into draw.io
               if (drawioRef.current && currentSessionId === currentSessionRef.current) {
                 try {
-                  const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedCells.join('')}</root></mxGraphModel>`;
+                  // Ensure nodes are placed before edges in the XML structure
+                  const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedNodes.join('')}${accumulatedEdges.join('')}</root></mxGraphModel>`;
                   drawioRef.current.load({ xml: loadXml });
                 } catch (e) {
                   console.error('Failed to load edge:', e);
@@ -562,21 +574,13 @@ export default function Home() {
                 }
                 return session;
               }));
-
-              // Add completion message
-              const doneMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'agent',
-                content: `✅ 图表已生成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`,
-                timestamp: Date.now()
-              };
-              setMessages(prev => [...prev, doneMsg]);
               break;
             }
 
             case 'drawio': {
               // Legacy format: {"type":"drawio","content":"<xml>"}
               hasIncrementalContent = true;
+              receivedDrawioDone = true;
               finalXml = chunk.content;
 
               if (drawioRef.current && currentSessionId === currentSessionRef.current) {
@@ -597,14 +601,6 @@ export default function Home() {
                 }
                 return session;
               }));
-
-              const legacyMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'agent',
-                content: '✅ 图表已生成！',
-                timestamp: Date.now()
-              };
-              setMessages(prev => [...prev, legacyMsg]);
               break;
             }
 
@@ -640,9 +636,16 @@ export default function Home() {
 
             case 'done': {
               // Stream completed
-              // If we received drawio content but no drawio_done, something went wrong
-              // Try to use the last known XML
-              if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
+              // Add completion message only once at the very end of the stream
+              if (receivedDrawioDone) {
+                const doneMsg: Message = {
+                  id: (Date.now() + 1).toString(),
+                  role: 'agent',
+                  content: `✅ 图表已生成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`,
+                  timestamp: Date.now()
+                };
+                setMessages(prev => [...prev, doneMsg]);
+              } else if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
                 // No content received at all
                 const noContentMsg: Message = {
                   id: (Date.now() + 1).toString(),
