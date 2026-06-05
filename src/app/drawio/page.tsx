@@ -4,7 +4,7 @@ import { DrawIoEmbed, DrawIoEmbedRef } from 'react-drawio';
 import { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getUserInfo, clearUserInfo } from '@/utils/cookie';
-import { agentApi } from '@/api/agent';
+import { agentApi, StreamEvent, DrawioNodeChunk, DrawioEdgeChunk, DrawioDoneChunk, DrawioLegacyChunk, UserChunk, StatusChunk, ErrorChunk } from '@/api/agent';
 import { AiAgentConfigResponseDTO } from '@/types/api';
 
 // Message type definition
@@ -128,6 +128,11 @@ export default function Home() {
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Stream State
+  const [streamPhase, setStreamPhase] = useState<string>('');
+  const [streamProgress, setStreamProgress] = useState<string>('');
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   // Context State
   const [useHistoryContext, setUseHistoryContext] = useState(false);
@@ -457,49 +462,220 @@ export default function Home() {
         return session;
       }));
 
-      // 2. Send Message
-      const chatRes = await agentApi.chat({
-        agentId: selectedAgentId,
-        userId: currentUser,
-        sessionId: activeBackendSessionId,
-        message: apiContent
-      });
+      // 2. Send Message via Stream
+      setStreamPhase('connecting');
+      setStreamProgress('正在连接...');
 
-      const { type, content } = chatRes.data;
+      // Track incremental merge state
+      let nodeCount = 0;
+      let edgeCount = 0;
+      let hasIncrementalContent = false;
+      let finalXml = '';
+      let agentTextContent = ''; // For non-drawio user-type responses
+      let receivedDrawioDone = false;
+      let accumulatedCells: string[] = []; // To hold incrementally added cells
 
-      // Handle response based on type
-      if (type === 'user') {
-        const agentMsg: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'agent',
-          content: content,
-          timestamp: Date.now()
-        };
-        setMessages(prev => [...prev, agentMsg]);
-      } else if (type === 'drawio') {
-        // Save to session immediately (always update the session that initiated the request)
-        setSessions(prev => prev.map(session => {
-          if (session.id === currentSessionId) {
-            return { 
-              ...session, 
-              drawIoXml: content,
-              lastModified: Date.now() 
-            };
+      const controller = await agentApi.chatStream(
+        {
+          agentId: selectedAgentId,
+          userId: currentUser,
+          sessionId: activeBackendSessionId,
+          message: apiContent
+        },
+        // onEvent
+        (event: StreamEvent) => {
+          const { phase, chunk } = event;
+
+          // Update phase display
+          const phaseLabel: Record<string, string> = {
+            analyzing: '🔍 分析需求',
+            drawing: '🎨 绘制图表',
+            reviewing: '✅ 检查优化',
+            thinking: '🤔 思考中',
+          };
+          if (phase !== 'done' && phase !== 'error') {
+            setStreamPhase(phase);
           }
-          return session;
-        }));
 
-        // Render only if still on the same session
-        if (drawioRef.current && currentSessionId === currentSessionRef.current) {
-          try {
-            drawioRef.current.load({
-              xml: content
-            });
-          } catch (e) {
-            console.error('Failed to load diagram:', e);
+          switch (chunk.type) {
+            case 'drawio_node': {
+              hasIncrementalContent = true;
+              nodeCount++;
+              setStreamProgress(`${phaseLabel[phase] || phase} · 添加节点 #${nodeCount}: ${chunk.label}`);
+
+              accumulatedCells.push(chunk.xml);
+
+              // Incrementally load the accumulated cells into draw.io
+              if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                try {
+                  const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedCells.join('')}</root></mxGraphModel>`;
+                  drawioRef.current.load({ xml: loadXml });
+                } catch (e) {
+                  console.error('Failed to load node:', e);
+                }
+              }
+              break;
+            }
+
+            case 'drawio_edge': {
+              hasIncrementalContent = true;
+              edgeCount++;
+              setStreamProgress(`${phaseLabel[phase] || phase} · 添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
+
+              accumulatedCells.push(chunk.xml);
+
+              // Incrementally load the accumulated cells into draw.io
+              if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                try {
+                  const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedCells.join('')}</root></mxGraphModel>`;
+                  drawioRef.current.load({ xml: loadXml });
+                } catch (e) {
+                  console.error('Failed to load edge:', e);
+                }
+              }
+              break;
+            }
+
+            case 'drawio_done': {
+              hasIncrementalContent = true;
+              receivedDrawioDone = true;
+              finalXml = chunk.content;
+              setStreamProgress('🎨 绘制完成，正在加载最终图表...');
+
+              // Final full load to ensure consistency
+              if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml) {
+                try {
+                  drawioRef.current.load({ xml: finalXml });
+                } catch (e) {
+                  console.error('Failed to load final diagram:', e);
+                }
+              }
+
+              // Save final XML to session
+              setSessions(prev => prev.map(session => {
+                if (session.id === currentSessionId) {
+                  return {
+                    ...session,
+                    drawIoXml: finalXml,
+                    lastModified: Date.now()
+                  };
+                }
+                return session;
+              }));
+
+              // Add completion message
+              const doneMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'agent',
+                content: `✅ 图表已生成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`,
+                timestamp: Date.now()
+              };
+              setMessages(prev => [...prev, doneMsg]);
+              break;
+            }
+
+            case 'drawio': {
+              // Legacy format: {"type":"drawio","content":"<xml>"}
+              hasIncrementalContent = true;
+              finalXml = chunk.content;
+
+              if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                try {
+                  drawioRef.current.load({ xml: finalXml });
+                } catch (e) {
+                  console.error('Failed to load diagram:', e);
+                }
+              }
+
+              setSessions(prev => prev.map(session => {
+                if (session.id === currentSessionId) {
+                  return {
+                    ...session,
+                    drawIoXml: finalXml,
+                    lastModified: Date.now()
+                  };
+                }
+                return session;
+              }));
+
+              const legacyMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'agent',
+                content: '✅ 图表已生成！',
+                timestamp: Date.now()
+              };
+              setMessages(prev => [...prev, legacyMsg]);
+              break;
+            }
+
+            case 'user': {
+              // AI returns a text response (not a diagram)
+              agentTextContent = chunk.content;
+              const userResponseMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'agent',
+                content: chunk.content,
+                timestamp: Date.now()
+              };
+              setMessages(prev => [...prev, userResponseMsg]);
+              break;
+            }
+
+            case 'status': {
+              // Intermediate status message
+              setStreamProgress(`${phaseLabel[phase] || phase} · ${chunk.content}`);
+              break;
+            }
+
+            case 'error': {
+              const errorMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'agent',
+                content: `❌ ${chunk.content}`,
+                timestamp: Date.now()
+              };
+              setMessages(prev => [...prev, errorMsg]);
+              break;
+            }
+
+            case 'done': {
+              // Stream completed
+              // If we received drawio content but no drawio_done, something went wrong
+              // Try to use the last known XML
+              if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
+                // No content received at all
+                const noContentMsg: Message = {
+                  id: (Date.now() + 1).toString(),
+                  role: 'agent',
+                  content: '⚠️ 未收到有效响应，请重试。',
+                  timestamp: Date.now()
+                };
+                setMessages(prev => [...prev, noContentMsg]);
+              }
+              break;
+            }
           }
+        },
+        // onError
+        (error: Error) => {
+          console.error('Stream error:', error);
+          const errorMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'agent',
+            content: `❌ 连接异常: ${error.message}`,
+            timestamp: Date.now()
+          };
+          setMessages(prev => [...prev, errorMsg]);
+        },
+        // onComplete
+        () => {
+          setIsSending(false);
+          setStreamPhase('');
+          setStreamProgress('');
         }
-      }
+      );
+
+      streamAbortRef.current = controller;
 
     } catch (error) {
       console.error('Chat error:', error);
@@ -510,8 +686,9 @@ export default function Home() {
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, errorMsg]);
-    } finally {
       setIsSending(false);
+      setStreamPhase('');
+      setStreamProgress('');
     }
   };
 
@@ -704,6 +881,17 @@ export default function Home() {
 
         {/* Draw.io Canvas Area */}
         <div className="flex-1 relative bg-slate-50 h-full flex flex-col">
+          {/* Stream Progress Overlay on Canvas */}
+          {isSending && streamProgress && (
+            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 px-4 py-2 bg-white/90 backdrop-blur-sm rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+              </div>
+              <span className="text-sm font-medium text-indigo-700">{streamProgress}</span>
+            </div>
+          )}
           <div className="flex-1 m-3 rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-white ring-1 ring-slate-100">
             <DrawIoEmbed 
               ref={drawioRef}
@@ -786,9 +974,9 @@ export default function Home() {
 
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-5 space-y-6 bg-slate-50/50 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
-            {messages.map((msg) => (
+            {messages.map((msg, index) => (
               <div 
-                key={msg.id} 
+                key={`${msg.id}-${index}`} 
                 className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
               >
                 <div className={`
@@ -819,6 +1007,40 @@ export default function Home() {
                 </div>
               </div>
             ))}
+
+            {/* Stream Progress Indicator */}
+            {isSending && streamProgress && (
+              <div className="flex gap-3 flex-row">
+                <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white bg-white text-indigo-500 border border-slate-100">
+                  <Icons.Bot className="w-5 h-5" />
+                </div>
+                <div className="flex flex-col max-w-[85%]">
+                  <span className="text-[10px] mb-1.5 font-medium text-left text-slate-400">Agent</span>
+                  <div className="p-3.5 text-sm leading-relaxed shadow-sm bg-white border border-indigo-100 text-indigo-700 rounded-2xl rounded-tl-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="flex gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                      </div>
+                      <span>{streamProgress}</span>
+                    </div>
+                    {/* Phase progress bar */}
+                    <div className="mt-2 w-full bg-slate-100 rounded-full h-1 overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-indigo-400 to-purple-500 rounded-full transition-all duration-500 ease-out"
+                        style={{ 
+                          width: streamPhase === 'analyzing' ? '25%' : 
+                                 streamPhase === 'drawing' ? '60%' : 
+                                 streamPhase === 'reviewing' ? '85%' : '10%' 
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -863,7 +1085,7 @@ export default function Home() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isSending ? "AI 正在思考中..." : "输入您的问题，描述您的需求..."}
+                placeholder={isSending ? (streamProgress || "AI 正在思考中...") : "输入您的问题，描述您的需求..."}
                 disabled={isSending}
                 className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-60 min-h-[50px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent"
                 rows={1}
@@ -894,7 +1116,7 @@ export default function Home() {
             </div>
             <div className="text-center mt-2.5">
                 <p className="text-[10px] text-slate-400 font-medium">
-                  {isSending ? 'AI is generating response...' : 'AI can make mistakes. Please verify important info.'}
+                  {isSending ? (streamProgress || 'AI is generating response...') : 'AI can make mistakes. Please verify important info.'}
                 </p>
             </div>
           </div>
