@@ -515,6 +515,15 @@ export default function Home() {
       let accumulatedReasoning = '';
       let accumulatedContent = '';
 
+      // Clear the canvas before starting a new stream
+      if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+        try {
+          drawioRef.current.load({ xml: '' });
+        } catch (e) {
+          console.error('Failed to clear canvas:', e);
+        }
+      }
+
       const controller = await agentApi.chatStream(
         {
           agentId: selectedAgentId,
@@ -539,13 +548,22 @@ export default function Home() {
 
           switch (chunk.type) {
             case 'drawio_node': {
-              // If a previous agent already finished drawing, and a new agent (like reviewer) starts drawing again, reset accumulators
+              // If a previous agent (e.g. drawer) finished, and a new agent (e.g. reviewer) starts sending nodes,
+              // we must reset the accumulators so we don't duplicate nodes.
               if (receivedDrawioDone) {
                 accumulatedNodes = [];
                 accumulatedEdges = [];
                 nodeCount = 0;
                 edgeCount = 0;
                 receivedDrawioDone = false;
+                // Also clear the canvas to prepare for the reviewer's updated layout
+                if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                  try {
+                    drawioRef.current.load({ xml: '' });
+                  } catch (e) {
+                    console.error('Failed to clear canvas for reviewer:', e);
+                  }
+                }
               }
 
               hasIncrementalContent = true;
@@ -568,6 +586,21 @@ export default function Home() {
             }
 
             case 'drawio_edge': {
+              if (receivedDrawioDone) {
+                accumulatedNodes = [];
+                accumulatedEdges = [];
+                nodeCount = 0;
+                edgeCount = 0;
+                receivedDrawioDone = false;
+                if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                  try {
+                    drawioRef.current.load({ xml: '' });
+                  } catch (e) {
+                    console.error('Failed to clear canvas for reviewer:', e);
+                  }
+                }
+              }
+
               hasIncrementalContent = true;
               edgeCount++;
               setStreamProgress(`添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
@@ -669,8 +702,8 @@ export default function Home() {
 
             case 'done': {
               // Stream completed
-              if (receivedDrawioDone) {
-                accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ 图表已生成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`;
+              if (nodeCount > 0 || receivedDrawioDone) {
+                accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ 图表绘制完成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`;
                 setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
               } else if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
                 accumulatedContent += (accumulatedContent ? '\n\n' : '') + `⚠️ 未收到有效响应，请重试。`;
@@ -905,17 +938,6 @@ export default function Home() {
 
         {/* Draw.io Canvas Area */}
         <div className="flex-1 relative bg-slate-50 h-full flex flex-col">
-          {/* Stream Progress Overlay on Canvas */}
-          {isSending && streamProgress && (
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 px-4 py-2 bg-white/90 backdrop-blur-sm rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
-              </div>
-              <span className="text-sm font-medium text-indigo-700">{streamProgress}</span>
-            </div>
-          )}
           <div className="flex-1 m-3 rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-white ring-1 ring-slate-100">
             <DrawIoEmbed 
               ref={drawioRef}
@@ -1133,7 +1155,7 @@ export default function Home() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isSending ? (streamProgress || "AI 正在生成中...") : "输入您的问题，描述您的需求..."}
+                placeholder={isSending ? "AI 正在生成中..." : "输入您的问题，描述您的需求..."}
                 disabled={isSending}
                 className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-60 min-h-[50px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 rows={1}
