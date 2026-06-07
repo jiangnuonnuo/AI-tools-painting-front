@@ -3,7 +3,7 @@ import {
     Response, 
     AiAgentConfigResponseDTO, 
     CreateSessionResponseDTO, 
-    ChatRequestDTO, 
+    ChatRequestDTO,
     ChatResponseDTO 
 } from '@/types/api';
 

@@ -130,6 +130,15 @@ export default function Lobby() {
         </div>
 
         <div className="flex items-center gap-3">
+          <a
+            href="https://bugstack.cn/md/project/ai-agent-scaffold/ai-agent-scaffold.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[rgba(255,255,255,0.6)] hover:text-white bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.1)] rounded-lg transition-colors border border-[rgba(255,255,255,0.1)] hover:border-[rgba(255,255,255,0.2)]"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            课程&源码
+          </a>
           <div className="flex items-center gap-2 px-3 py-1.5 bg-[rgba(255,255,255,0.06)] rounded-full border border-[rgba(255,255,255,0.1)]">
             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
             <span className="text-xs font-medium text-[rgba(255,255,255,0.7)]">{currentUser}</span>

@@ -123,6 +123,16 @@ interface Session {
   lastModified: number;
 }
 
+export interface CustomModelConfig {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  completionsPath: string;
+  enabled: boolean;
+}
+
 export default function Home() {
   const router = useRouter();
   const [imgData, setImgData] = useState<string | null>(null);
@@ -168,6 +178,14 @@ export default function Home() {
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [newSessionTitle, setNewSessionTitle] = useState('');
+
+  // Custom API Config State
+  const [showApiConfig, setShowApiConfig] = useState(false);
+  const [customModels, setCustomModels] = useState<CustomModelConfig[]>([]);
+  const [selectedCustomModelId, setSelectedCustomModelId] = useState<string>('default');
+  
+  // Temporary state for editing in modal
+  const [editingModel, setEditingModel] = useState<CustomModelConfig | null>(null);
 
   // Session Management State
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -322,6 +340,47 @@ export default function Home() {
     }
   };
 
+  const saveCustomModels = (models: CustomModelConfig[]) => {
+    setCustomModels(models);
+    localStorage.setItem('ai_agent_custom_models', JSON.stringify(models));
+  };
+
+  const handleAddNewModel = () => {
+    setEditingModel({
+      id: Date.now().toString(),
+      name: '新模型',
+      baseUrl: 'https://api.openai.com',
+      apiKey: '',
+      model: 'gpt-4o',
+      completionsPath: 'v1/chat/completions',
+      enabled: true
+    });
+  };
+
+  const handleSaveEditingModel = () => {
+    if (!editingModel) return;
+    const exists = customModels.some(m => m.id === editingModel.id);
+    let newModels;
+    if (exists) {
+      newModels = customModels.map(m => m.id === editingModel.id ? editingModel : m);
+    } else {
+      newModels = [...customModels, editingModel];
+    }
+    saveCustomModels(newModels);
+    setSelectedCustomModelId(editingModel.id);
+    localStorage.setItem('ai_agent_selected_model', editingModel.id);
+    setEditingModel(null);
+  };
+
+  const handleDeleteModel = (id: string) => {
+    const newModels = customModels.filter(m => m.id !== id);
+    saveCustomModels(newModels);
+    if (selectedCustomModelId === id) {
+      setSelectedCustomModelId('default');
+      localStorage.setItem('ai_agent_selected_model', 'default');
+    }
+  };
+
   const exportDiagram = () => {
     if (drawioRef.current) {
       drawioRef.current.exportDiagram({
@@ -346,6 +405,18 @@ export default function Home() {
       return;
     }
     setCurrentUser(userInfo.user);
+
+    // Load Custom Models
+    const savedModels = localStorage.getItem('ai_agent_custom_models');
+    if (savedModels) {
+      try {
+        setCustomModels(JSON.parse(savedModels));
+      } catch (e) {}
+    }
+    const savedSelected = localStorage.getItem('ai_agent_selected_model');
+    if (savedSelected) {
+      setSelectedCustomModelId(savedSelected);
+    }
 
     // Load Agents
     const loadAgents = async () => {
@@ -556,12 +627,18 @@ export default function Home() {
         }
       }
 
+      const activeModelConfig = customModels.find(m => m.id === selectedCustomModelId && m.enabled);
+
       const controller = await agentApi.chatStream(
         {
           agentId: selectedAgentId,
           userId: currentUser,
           sessionId: activeBackendSessionId,
-          message: apiContent
+          message: apiContent,
+          customBaseUrl: activeModelConfig?.baseUrl || undefined,
+          customApiKey: activeModelConfig?.apiKey || undefined,
+          customCompletionsPath: activeModelConfig?.completionsPath || undefined,
+          customModel: activeModelConfig?.model || undefined
         },
         // onEvent
         (event: StreamEvent) => {
@@ -938,7 +1015,7 @@ export default function Home() {
     setInputValue('');
     // Reset textarea height
     const textarea = document.querySelector('textarea');
-    if (textarea) textarea.style.height = '50px';
+    if (textarea) textarea.style.height = '80px';
 
     setIsSending(true);
 
@@ -1024,6 +1101,16 @@ export default function Home() {
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
             返回工作台
           </button>
+
+          <a
+            href="https://bugstack.cn/md/project/ai-agent-scaffold/ai-agent-scaffold.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 bg-white border border-slate-200 hover:border-slate-300 rounded-lg transition-all shadow-sm"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            课程&源码
+          </a>
 
           <div className="h-6 w-px bg-slate-200 mx-1"></div>
 
@@ -1165,7 +1252,7 @@ export default function Home() {
         {/* Chat Sidebar - Modern & Elegant */}
         <div 
           className={`
-            border-l border-slate-200 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]
+            border-l border-slate-100/60 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]
             ${isChatOpen ? 'w-[380px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'}
             shadow-xl z-20
           `}
@@ -1342,39 +1429,37 @@ export default function Home() {
               </div>
             )}
 
-            {/* Context Toolbar */}
+            {/* Canvas Context Toggle - above textarea */}
             <div className="flex items-center gap-2 mb-2 px-1">
                 <button
                     onClick={() => setUseHistoryContext(!useHistoryContext)}
                     className={`
-                        flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all border shadow-sm
+                        flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium transition-all border
                         ${useHistoryContext 
-                            ? 'bg-indigo-50 text-indigo-600 border-indigo-200 ring-1 ring-indigo-100' 
-                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-700'
+                            ? 'bg-indigo-50 text-indigo-600 border-indigo-200' 
+                            : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600'
                         }
                     `}
                 >
-                    <Icons.Layers className={`w-3.5 h-3.5 ${useHistoryContext ? 'text-indigo-500' : 'text-slate-400'}`} />
-                    <span>携带画布上下文</span>
+                    <Icons.Layers className={`w-3 h-3 ${useHistoryContext ? 'text-indigo-500' : 'text-slate-400'}`} />
+                    <span>画布上下文</span>
                 </button>
-                <span className="text-[10px] text-slate-400 ml-auto hidden sm:inline-block">
-                    <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 发送, <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Shift</kbd> + <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 换行
-                </span>
             </div>
-            <div className="relative flex items-end gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50/50 focus-within:bg-white transition-all shadow-inner">
+
+            <div className="relative flex items-end gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200 focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-100 focus-within:bg-white transition-all shadow-sm">
               <textarea
                 value={inputValue}
                 onChange={(e) => {
                   setInputValue(e.target.value);
                   e.target.style.height = 'auto';
-                  e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 300) + 'px';
                 }}
                 onKeyDown={handleKeyDown}
                 placeholder={isSending ? "AI 正在生成中..." : "输入您的问题，描述您的需求..."}
                 disabled={isSending}
-                className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-60 min-h-[50px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 px-4 py-3 bg-transparent border-none focus:ring-0 text-[15px] text-slate-800 placeholder:text-slate-400 resize-none max-h-[300px] min-h-[80px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent disabled:opacity-50 disabled:cursor-not-allowed leading-relaxed"
                 rows={1}
-                style={{ height: 'auto', minHeight: '50px' }}
+                style={{ height: 'auto', minHeight: '80px' }}
               />
               <div className="flex gap-1 mb-0.5 shrink-0">
                   {isSending ? (
@@ -1411,9 +1496,42 @@ export default function Home() {
                   </button>
               </div>
             </div>
-            <div className="text-center mt-2.5">
-                <p className="text-[10px] text-slate-400 font-medium">
-                  {isSending ? (streamProgress || 'AI is generating response...') : 'AI can make mistakes. Please verify important info.'}
+
+            {/* Model Selection - below textarea */}
+            <div className="flex items-center gap-2 mt-2 px-1">
+                <div className="relative flex items-center bg-white border border-slate-200 rounded-full shadow-sm hover:border-slate-300 transition-colors">
+                    <Icons.Sparkles className={`w-3 h-3 ml-2 ${selectedCustomModelId !== 'default' ? 'text-indigo-500' : 'text-slate-400'}`} />
+                    <select
+                        value={selectedCustomModelId}
+                        onChange={(e) => {
+                            if (e.target.value === 'add_new') {
+                                setShowApiConfig(true);
+                                e.target.value = selectedCustomModelId;
+                            } else {
+                                setSelectedCustomModelId(e.target.value);
+                                localStorage.setItem('ai_agent_selected_model', e.target.value);
+                            }
+                        }}
+                        className="appearance-none bg-transparent border-none text-[11px] font-medium text-slate-600 focus:ring-0 py-1 pl-1 pr-5 cursor-pointer outline-none"
+                    >
+                        <option value="default">默认模型</option>
+                        {customModels.filter(m => m.enabled).map(m => (
+                            <option key={m.id} value={m.id}>{m.name || m.model}</option>
+                        ))}
+                        <option disabled>──────────</option>
+                        <option value="add_new">+ 管理模型</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-slate-400">
+                        <svg className="fill-current h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                    </div>
+                </div>
+                <span className="text-[10px] text-slate-400 ml-auto hidden sm:inline">
+                    <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 发送
+                </span>
+            </div>
+            <div className="text-center mt-1.5">
+                <p className="text-[10px] text-slate-400">
+                  {isSending ? (streamProgress || '生成中...') : ''}
                 </p>
             </div>
           </div>
@@ -1510,6 +1628,118 @@ export default function Home() {
                     >
                         Save Changes
                     </button>
+                </div>
+            </div>
+        </div>
+      )}
+      {/* Custom Models Settings Modal */}
+      {showApiConfig && (
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20 flex flex-col max-h-[90vh]">
+                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-2">
+                      <Icons.Sparkles className="w-5 h-5 text-indigo-500" />
+                      <h2 className="text-lg font-bold text-slate-800">自定义模型配置</h2>
+                    </div>
+                    <button 
+                        onClick={() => {
+                          setShowApiConfig(false);
+                          setEditingModel(null);
+                        }}
+                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                    >
+                        <Icons.Close className="w-5 h-5" />
+                    </button>
+                </div>
+                
+                <div className="flex flex-1 overflow-hidden">
+                    {/* List of Models */}
+                    <div className="w-1/3 border-r border-slate-100 bg-slate-50 flex flex-col">
+                        <div className="p-3">
+                            <button 
+                                onClick={handleAddNewModel}
+                                className="w-full flex items-center justify-center gap-2 py-2 bg-white border border-indigo-200 text-indigo-600 rounded-lg hover:bg-indigo-50 transition-colors shadow-sm text-sm font-medium"
+                            >
+                                <Icons.Plus className="w-4 h-4" /> 添加模型
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                            {customModels.map(model => (
+                                <div 
+                                    key={model.id}
+                                    onClick={() => setEditingModel(model)}
+                                    className={`p-3 rounded-xl border cursor-pointer transition-all ${editingModel?.id === model.id ? 'bg-indigo-50 border-indigo-200 shadow-sm ring-1 ring-indigo-100' : 'bg-white border-slate-200 hover:border-indigo-100 hover:shadow-sm'}`}
+                                >
+                                    <div className="flex items-center justify-between mb-1">
+                                        <div className="font-semibold text-sm text-slate-800 truncate pr-2">{model.name}</div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            {/* Toggle Switch */}
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const newModels = customModels.map(m => m.id === model.id ? {...m, enabled: !m.enabled} : m);
+                                                    saveCustomModels(newModels);
+                                                    if (!(!model.enabled) && selectedCustomModelId === model.id) {
+                                                        setSelectedCustomModelId('default');
+                                                    }
+                                                }}
+                                                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${model.enabled ? 'bg-indigo-500' : 'bg-slate-300'}`}
+                                            >
+                                                <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${model.enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                                            </button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteModel(model.id); }} className="text-slate-400 hover:text-red-500 ml-1">
+                                                <Icons.Trash className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 truncate">{model.model}</div>
+                                </div>
+                            ))}
+                            {customModels.length === 0 && (
+                                <div className="text-center text-xs text-slate-400 py-6">
+                                    暂无自定义模型<br/>点击上方按钮添加
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Edit Form */}
+                    <div className="flex-1 p-6 overflow-y-auto bg-white">
+                        {editingModel ? (
+                            <div className="space-y-4 animate-in fade-in duration-200">
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">展示名称</label>
+                                    <input type="text" value={editingModel.name} onChange={e => setEditingModel({...editingModel, name: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="例如：我的GPT-4o" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">模型名称 (Model)</label>
+                                    <input type="text" value={editingModel.model} onChange={e => setEditingModel({...editingModel, model: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="例如：gpt-4o" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">Base URL</label>
+                                    <input type="text" value={editingModel.baseUrl} onChange={e => setEditingModel({...editingModel, baseUrl: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="例如：https://api.openai.com" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">API Key</label>
+                                    <input type="password" value={editingModel.apiKey} onChange={e => setEditingModel({...editingModel, apiKey: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="sk-..." />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">Completions Path (可选)</label>
+                                    <input type="text" value={editingModel.completionsPath} onChange={e => setEditingModel({...editingModel, completionsPath: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="默认为 v1/chat/completions" />
+                                </div>
+                                <div className="pt-2 flex justify-end">
+                                    <button onClick={handleSaveEditingModel} className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 shadow-sm transition-all text-sm">
+                                        保存配置
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                                <Icons.Sparkles className="w-12 h-12 mb-3 opacity-20" />
+                                <p className="text-sm">选择左侧模型进行编辑，或点击添加</p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>
