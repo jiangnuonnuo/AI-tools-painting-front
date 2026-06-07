@@ -6,12 +6,23 @@ import { getUserInfo, clearUserInfo } from '@/utils/cookie';
 import { agentApi, StatusChunk, UserChunk, ErrorChunk, PptRawChunk } from '@/api/agent';
 import { AiAgentConfigResponseDTO } from '@/types/api';
 import pptxgen from 'pptxgenjs';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // Message type definition
+type MessageStep = {
+  phase: string;
+  label: string;
+  content: string;
+  status: 'running' | 'done' | 'pending';
+};
+
 type Message = {
   id: string;
   role: 'user' | 'agent';
   content: string;
+  reasoning?: string;
+  steps?: MessageStep[];
   timestamp: number;
 };
 
@@ -131,6 +142,11 @@ const Icons = {
   MessageSquare: ({ className }: { className?: string }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+    </svg>
+  ),
+  Square: ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
     </svg>
   ),
   FilePresentation: ({ className }: { className?: string }) => (
@@ -824,6 +840,11 @@ export default function PptPage() {
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Stream State
+  const [streamPhase, setStreamPhase] = useState<string>('');
+  const [streamProgress, setStreamProgress] = useState<string>('');
+  const streamAbortRef = useRef<AbortController | null>(null);
+
   // Agent State
   const [agents, setAgents] = useState<AiAgentConfigResponseDTO[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -1101,12 +1122,31 @@ export default function PptPage() {
     localStorage.setItem('ai_ppt_last_agent', newAgentId);
   };
 
+  const handleStopStream = () => {
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+      streamAbortRef.current = null;
+    }
+    setIsSending(false);
+    setStreamPhase('');
+    setStreamProgress('');
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      role: 'agent',
+      content: '⚠️ 已停止生成。',
+      timestamp: Date.now()
+    }]);
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isSending) return;
 
     const content = inputValue;
     setInputValue('');
     setIsSending(true);
+    
+    const textarea = document.querySelector('textarea');
+    if (textarea) textarea.style.height = '44px';
 
     // Build style hints from control panel selections
     const styleHints: string[] = [];
@@ -1122,7 +1162,9 @@ export default function PptPage() {
       const layoutLabels = selectedLayouts.map(id => LAYOUT_OPTIONS.find(o => o.id === id)?.label || id).join('、');
       styleHints.push(`布局=${layoutLabels}`);
     }
-    const enrichedContent = `[设计指令: ${styleHints.join(', ')}]\n\n${content}`;
+    const enrichedContent = `[设计指令: ${styleHints.join(', ')}]
+
+${content}`;
 
     if (!selectedAgentId) {
       setMessages((prev) => [
@@ -1144,7 +1186,18 @@ export default function PptPage() {
       content,
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    
+    const agentMsgId = Date.now().toString() + '-agent';
+    const initialAgentMsg: Message = {
+      id: agentMsgId,
+      role: 'agent',
+      content: '',
+      reasoning: '',
+      steps: [],
+      timestamp: Date.now()
+    };
+    
+    setMessages((prev) => [...prev, userMsg, initialAgentMsg]);
 
     try {
       // Ensure session
@@ -1154,26 +1207,46 @@ export default function PptPage() {
         activeBackendSessionId = sessionRes.data.sessionId;
         setSessionId(activeBackendSessionId);
       }
+      
+      setSessions(prev => prev.map(session => {
+        if (session.id === currentSessionId) {
+          return { ...session, lastModified: Date.now() };
+        }
+        return session;
+      }));
 
       // --- Streaming PPT generation ---
-      // Use chatStream like draw.io for progressive rendering
       let accumulatedText = '';
-      let streamPhase: 'analyzing' | 'generating' | 'reviewing' | 'done' = 'analyzing';
+      let streamPhaseStr: string = 'analyzing';
       let renderedSlideCount = 0;
       let pptTitle = '';
       const currentSessionIdRef = currentSessionId;
+      
+      let accumulatedReasoning = '';
+      let accumulatedContent = '';
+      let accumulatedSteps: MessageStep[] = [];
 
-      // Show initial progress message
-      const progressMsgId = (Date.now() + 1).toString();
-      setMessages((prev) => [
-        ...prev,
-        { id: progressMsgId, role: 'agent', content: '🔍 正在分析需求...', timestamp: Date.now() },
-      ]);
-
-      const updateProgress = (text: string) => {
-        setMessages((prev) =>
-          prev.map((m) => m.id === progressMsgId ? { ...m, content: text } : m)
-        );
+      setStreamPhase('analyzing');
+      setStreamProgress('正在分析需求...');
+      
+      const updateStep = (phaseStr: string, phaseText: string, contentToAdd: string, isDone: boolean = false) => {
+          const stepIndex = accumulatedSteps.findIndex(s => s.phase === phaseStr);
+          if (stepIndex >= 0) {
+              if (contentToAdd) {
+                  accumulatedSteps[stepIndex].content += contentToAdd + '\n';
+              }
+              if (isDone) {
+                  accumulatedSteps[stepIndex].status = 'done';
+              }
+          } else {
+              accumulatedSteps.forEach(s => { if (s.status === 'running') s.status = 'done'; });
+              accumulatedSteps.push({
+                  phase: phaseStr,
+                  label: phaseText,
+                  content: contentToAdd ? contentToAdd + '\n' : '',
+                  status: isDone ? 'done' : 'running'
+              });
+          }
       };
 
       const controller = await agentApi.chatStream(
@@ -1183,21 +1256,28 @@ export default function PptPage() {
           sessionId: activeBackendSessionId,
           message: enrichedContent,
         },
-        // onEvent
         (event) => {
           const { phase, chunk } = event;
 
-          // Update stream phase based on event phase
-          if (phase === 'analyzing') streamPhase = 'analyzing';
-          else if (phase === 'drawing' || phase === 'generating') streamPhase = 'generating';
-          else if (phase === 'reviewing') streamPhase = 'reviewing';
+          const phaseLabel: Record<string, string> = {
+            analyzing: '🔍 分析需求',
+            drawing: '🎨 生成内容',
+            generating: '🎨 生成内容',
+            reviewing: '✅ 检查优化',
+            thinking: '🤔 思考中',
+          };
+          const currentPhaseLabel = phaseLabel[phase] || phaseLabel.thinking;
+          
+          if (phase !== 'done' && phase !== 'error') {
+            setStreamPhase(phase);
+            streamPhaseStr = phase;
+            updateStep(phase, currentPhaseLabel, '');
+          }
 
-          // Handle ppt_raw: incremental text that may contain PPT JSON
           if (chunk.type === 'ppt_raw') {
             const rawContent = (chunk as PptRawChunk).raw || '';
             accumulatedText += rawContent;
 
-            // Try progressive slide extraction from accumulated text
             const partialSlides = tryExtractPartialSlides(accumulatedText);
             if (partialSlides && partialSlides.length > renderedSlideCount) {
               const newSlides = partialSlides.map(normalizePptSlide);
@@ -1207,55 +1287,85 @@ export default function PptPage() {
               setPptData({ title: pptTitle || 'PPT', slides: newSlides });
               renderedSlideCount = newSlides.length;
             }
-
-            const phaseEmoji = streamPhase === 'analyzing' ? '🔍' : streamPhase === 'generating' ? '🎨' : streamPhase === 'reviewing' ? '✅' : '🤖';
-            const phaseText = streamPhase === 'analyzing' ? '分析需求' : streamPhase === 'generating' ? '生成内容' : streamPhase === 'reviewing' ? '检查优化' : '处理中';
-            updateProgress(`${phaseEmoji} 正在${phaseText} · 已渲染 ${renderedSlideCount} 页...`);
+            setStreamProgress(`已渲染 ${renderedSlideCount} 页...`);
           } else if (chunk.type === 'status') {
             const statusContent = (chunk as StatusChunk).content || '';
             accumulatedText += statusContent;
-
-            // Update phase from content hints
-            if (statusContent.includes('分析') || statusContent.includes('analys')) {
-              streamPhase = 'analyzing';
-            } else if (statusContent.includes('生成') || statusContent.includes('generat') || statusContent.includes('绘制') || statusContent.includes('PPT')) {
-              streamPhase = 'generating';
-            } else if (statusContent.includes('检查') || statusContent.includes('review') || statusContent.includes('优化')) {
-              streamPhase = 'reviewing';
+            
+            const text = statusContent.trim();
+            if (text !== '}' && text !== '{' && text !== ']' && text !== '[' && 
+                !text.startsWith('```') && 
+                !text.startsWith('"type":') &&
+                !text.startsWith('"id":') &&
+                !text.includes('"ppt_raw"')) {
+                if (!accumulatedReasoning.endsWith(text + '\n')) {
+                    accumulatedReasoning += statusContent + '\n';
+                }
+                updateStep(phase, currentPhaseLabel, statusContent);
+                setStreamProgress(text.substring(0, 50) + '...');
+                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, reasoning: accumulatedReasoning, steps: [...accumulatedSteps] } : m));
             }
-
-            // Try progressive slide extraction from accumulated text
+            
             const partialSlides = tryExtractPartialSlides(accumulatedText);
             if (partialSlides && partialSlides.length > renderedSlideCount) {
               const newSlides = partialSlides.map(normalizePptSlide);
               const titleMatch = accumulatedText.match(/"title"\s*:\s*"([^"]+)"/);
               if (titleMatch) pptTitle = titleMatch[1];
-
               setPptData({ title: pptTitle || 'PPT', slides: newSlides });
               renderedSlideCount = newSlides.length;
             }
-
-            const phaseEmoji = streamPhase === 'analyzing' ? '🔍' : streamPhase === 'generating' ? '🎨' : streamPhase === 'reviewing' ? '✅' : '🤖';
-            const phaseText = streamPhase === 'analyzing' ? '分析需求' : streamPhase === 'generating' ? '生成内容' : streamPhase === 'reviewing' ? '检查优化' : '处理中';
-            updateProgress(`${phaseEmoji} 正在${phaseText}${renderedSlideCount > 0 ? ` · 已完成 ${renderedSlideCount} 页` : ''}...`);
           } else if (chunk.type === 'user') {
-            // AI asks for more info
-            updateProgress((chunk as UserChunk).content || '请补充信息');
+            const text = (chunk as UserChunk).content || '';
+            let displayContent = text;
+            if (text.startsWith('{') && text.includes('"type"') && text.includes('"user"')) {
+                try {
+                    const parsed = JSON.parse(text);
+                    if (parsed.content) displayContent = parsed.content;
+                } catch (e) {}
+            }
+            const padding = accumulatedContent && !accumulatedContent.endsWith('\n\n') ? '\n\n' : '';
+            accumulatedContent += padding + displayContent;
+            setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
+          } else if (chunk.type === 'token') {
+             const text = chunk.content?.trim() || '';
+             if (text !== '}' && text !== '{' && text !== ']' && text !== '[' && 
+                 !text.startsWith('```') && 
+                 !text.startsWith('"type":') &&
+                 !text.startsWith('"id":') &&
+                 !text.includes('"ppt_raw"')) {
+                 const stepIndex = accumulatedSteps.findIndex(s => s.phase === phase);
+                 if (stepIndex >= 0 && accumulatedSteps[stepIndex].content.endsWith(chunk.content + '\n')) {
+                     // Skip duplicate
+                 } else {
+                     updateStep(phase, currentPhaseLabel, chunk.content);
+                     setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
+                 }
+             }
           } else if (chunk.type === 'error') {
-            updateProgress(`❌ ${(chunk as ErrorChunk).content || '生成失败'}`);
+            accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ ${(chunk as ErrorChunk).content || '生成失败'}`;
+            setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
           } else if (chunk.type === 'done' || chunk.type === 'drawio_done') {
-            streamPhase = 'done';
+            setStreamPhase('done');
           }
         },
-        // onError
         (error: Error) => {
           console.error('Stream error:', error);
-          updateProgress(`❌ 连接错误: ${error.message}`);
+          if (error.name !== 'AbortError' && renderedSlideCount === 0 && !accumulatedContent) {
+              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ 连接异常: ${error.message}`;
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: m.steps?.map(s => ({...s, status: 'done'})) } : m));
+          } else {
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: m.steps?.map(s => ({...s, status: 'done'})) } : m));
+          }
+          setIsSending(false);
+          setStreamPhase('');
+          setStreamProgress('');
         },
-        // onComplete
         () => {
-          // Stream finished — try to parse accumulated text as PPT data
-          // (fallback for non-incremental streams)
+          setIsSending(false);
+          setStreamPhase('');
+          setStreamProgress('');
+          accumulatedSteps.forEach(s => { s.status = 'done'; });
+
           if (accumulatedText && renderedSlideCount === 0) {
             const detectedPpt = tryParsePpt(accumulatedText);
             if (detectedPpt) {
@@ -1270,9 +1380,9 @@ export default function PptPage() {
                     : session
                 )
               );
-              updateProgress(`✅ PPT 已生成！共 ${normalizedPpt.slides.length} 页，可以预览或下载。`);
+              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ PPT 已生成！共 ${normalizedPpt.slides.length} 页，可以预览或下载。`;
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
             } else {
-              // Try to extract user message from accumulated text
               let displayContent = accumulatedText;
               if (accumulatedText.trim().startsWith('{')) {
                 try {
@@ -1288,22 +1398,21 @@ export default function PptPage() {
                           : session
                       )
                     );
-                    updateProgress(`✅ PPT 已生成！共 ${norm.slides.length} 页。`);
+                    accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ PPT 已生成！共 ${norm.slides.length} 页。`;
                   } else {
                     displayContent = parsed.message || parsed.content || parsed.text || '收到响应。';
                     if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
-                    updateProgress(displayContent);
+                    accumulatedContent += (accumulatedContent ? '\n\n' : '') + displayContent;
                   }
                 } catch {
-                  updateProgress('收到响应，但无法解析 PPT 数据。');
+                  accumulatedContent += (accumulatedContent ? '\n\n' : '') + '收到响应，但无法解析 PPT 数据。';
                 }
               }
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
             }
           } else if (renderedSlideCount > 0) {
-            // Slides were rendered incrementally — try final complete parse for review optimizations
             const finalPpt = tryParsePpt(accumulatedText);
             if (finalPpt && finalPpt.slides.length >= renderedSlideCount) {
-              // Review agent may have modified slides — use the complete version
               const normalizedPpt = normalizePptData(finalPpt);
               setPptData(normalizedPpt);
               renderedSlideCount = normalizedPpt.slides.length;
@@ -1315,11 +1424,16 @@ export default function PptPage() {
                 )
               );
             }
-            updateProgress(`✅ PPT 已生成！共 ${renderedSlideCount} 页，可以预览或下载。`);
+            accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ PPT 已生成！共 ${renderedSlideCount} 页，可以预览或下载。`;
+            setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
             setCurrentSlideIndex(0);
+          } else {
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
           }
         }
       );
+      
+      streamAbortRef.current = controller;
 
     } catch (error) {
       console.error('Chat error:', error);
@@ -1332,11 +1446,11 @@ export default function PptPage() {
           timestamp: Date.now(),
         },
       ]);
-    } finally {
       setIsSending(false);
+      setStreamPhase('');
+      setStreamProgress('');
     }
   };
-
   const handleDownloadPptx = () => {
     if (!pptData) return;
     try {
@@ -1390,7 +1504,7 @@ export default function PptPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
@@ -1710,7 +1824,7 @@ export default function PptPage() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
               }}
             >
               {el.number ?? 1}
@@ -1780,7 +1894,7 @@ export default function PptPage() {
               width: `${wPct}%`,
               height: `${hPct}%`,
               borderRadius: el.radius ? `${el.radius}px` : '4px',
-              boxShadow: el.shadow ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
+              boxShadow: el.shadow ? '0 6px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04)' : 'none',
               opacity: el.opacity ?? 1,
               display: 'flex',
               alignItems: 'center',
@@ -1826,7 +1940,7 @@ export default function PptPage() {
           height: `${(h / 7.5) * 100}%`,
           background: gradient || `#${color}`,
           borderRadius: isCircle ? '50%' : (radius ? `${radius}px` : '0'),
-          boxShadow: shadow ? '0 2px 8px rgba(0,0,0,0.12)' : 'none',
+          boxShadow: shadow ? '0 4px 16px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04)' : 'none',
           opacity,
         }}
       />
@@ -2041,7 +2155,7 @@ export default function PptPage() {
 
 
   return (
-    <div className="flex flex-col h-screen w-full overflow-hidden bg-gray-100 text-slate-800 font-sans">
+    <div className="flex flex-col h-screen w-full overflow-hidden bg-slate-50 text-slate-900 font-sans">
       {/* ===== Header Bar ===== */}
       <header className="h-12 bg-white border-b border-gray-200 flex items-center justify-between px-4 shrink-0 z-40 shadow-sm">
         <div className="flex items-center gap-3">
@@ -2270,7 +2384,7 @@ export default function PptPage() {
         </aside>
 
         {/* ===== Center: Main Slide Preview ===== */}
-        <main className="flex-1 flex flex-col bg-gray-50 h-full overflow-hidden">
+        <main className="flex-1 flex flex-col bg-slate-50 h-full overflow-hidden">
           <div
             className="flex-1 flex items-center justify-center p-6 overflow-hidden"
             tabIndex={0}
@@ -2303,7 +2417,7 @@ export default function PptPage() {
                   maxHeight: 'calc(100vh - 160px)',
                 }}
               >
-                <div className="w-full h-full relative">
+                <div className="w-full h-full relative" style={{ fontFamily: "\"PingFang SC\", \"Microsoft YaHei\", system-ui, -apple-system, sans-serif", letterSpacing: "0.2px" }}>
                   {renderThemeDecor(pptData.slides[currentSlideIndex], currentSlideIndex)}
                   {renderSlideContent(pptData.slides[currentSlideIndex], currentSlideIndex)}
                 </div>
@@ -2454,110 +2568,258 @@ export default function PptPage() {
             </div>
           </div>
 
-          {/* Chat Panel */}
-          <div
-            className={`border-l border-gray-200 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${
-              isChatOpen ? 'w-[360px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'
-            } shadow-lg`}
-          >
-            {/* Chat Header */}
-            <div className="h-12 px-4 border-b border-gray-100 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-sm shrink-0">
-                  <Icons.Sparkles className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <select
-                    value={selectedAgentId}
-                    onChange={handleAgentChange}
-                    className="w-full bg-transparent text-sm font-bold text-slate-800 focus:outline-none cursor-pointer truncate appearance-none pr-4"
-                  >
-                    {agents.length === 0 && <option value="">Loading...</option>}
-                    {agents.map((agent) => (
-                      <option key={agent.agentId} value={agent.agentId}>{agent.agentName}</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                    <span className="text-[10px] text-gray-400">PPT 助手在线</span>
-                  </div>
+          {/* Chat Sidebar - Modern & Elegant */}
+        <div 
+          className={`
+            border-l border-slate-200 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]
+            ${isChatOpen ? 'w-[380px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'}
+            shadow-xl z-20
+          `}
+        >
+          {/* Chat Header */}
+          <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-200 shrink-0 ring-2 ring-white">
+                <Icons.Sparkles className="w-4 h-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <select 
+                  value={selectedAgentId} 
+                  onChange={handleAgentChange}
+                  className="w-full bg-transparent text-sm font-bold text-slate-800 focus:outline-none cursor-pointer truncate appearance-none pr-4"
+                  style={{ backgroundImage: 'none' }}
+                >
+                  {agents.length === 0 && <option value="">Loading agents...</option>}
+                  {agents.map(agent => (
+                    <option key={agent.agentId} value={agent.agentId}>
+                      {agent.agentName}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                   <span className="text-[10px] text-slate-500 font-medium leading-tight">AI Assistant Online</span>
                 </div>
               </div>
-              <button onClick={() => setIsChatOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition shrink-0">
-                <Icons.Close className="w-5 h-5" />
-              </button>
             </div>
+            <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setIsChatOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-all shrink-0"
+                >
+                  <Icons.Close className="w-5 h-5" />
+                </button>
+            </div>
+          </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 scrollbar-thin scrollbar-thumb-gray-200">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                  <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center shadow-sm ${
-                    msg.role === 'user' ? 'bg-indigo-100 text-indigo-600' : 'bg-white text-indigo-500 border border-gray-100'
-                  }`}>
-                    {msg.role === 'user' ? <Icons.User className="w-4 h-4" /> : <Icons.Bot className="w-4 h-4" />}
+          {/* Messages Area */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-6 bg-slate-50/50 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+            {messages.map((msg, index) => {
+              return (
+                <div 
+                  key={`${msg.id}-${index}`} 
+                  className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                >
+                  <div className={`
+                    shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white
+                    ${msg.role === 'user' 
+                      ? 'bg-indigo-100 text-indigo-600' 
+                      : 'bg-white text-indigo-500 border border-slate-100'
+                    }
+                  `}>
+                    {msg.role === 'user' ? <Icons.User className="w-5 h-5" /> : <Icons.Bot className="w-5 h-5" />}
                   </div>
-                  <div className="flex flex-col max-w-[85%]">
-                    <div className={`p-3 text-sm leading-relaxed whitespace-pre-wrap rounded-xl shadow-sm ${
-                      msg.role === 'user'
-                        ? 'bg-indigo-600 text-white rounded-tr-sm'
-                        : 'bg-white border border-gray-200 text-gray-700 rounded-tl-sm'
-                    }`}>
-                      {msg.content}
+                  
+                  <div className="flex flex-col max-w-[85%] w-full">
+                      <span className={`text-[10px] mb-1.5 font-medium ${msg.role === 'user' ? 'text-right text-slate-400' : 'text-left text-slate-400'}`}>
+                          {msg.role === 'user' ? 'You' : 'Agent'}
+                      </span>
+                      
+                      <div className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        {/* Steps / Reasoning Block */}
+                        {msg.role === 'agent' && ((msg.steps && msg.steps.length > 0) || msg.reasoning) && (
+                          <div className="w-full max-w-full">
+                            <details className="w-full group/details open:pb-2" open={index === messages.length - 1 && isSending}>
+                              <summary className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700 font-medium select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm transition-all hover:border-slate-300">
+                                 <Icons.Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                                 <span className="group-open/details:hidden">展开执行步骤</span>
+                                 <span className="hidden group-open/details:inline">收起执行步骤</span>
+                              </summary>
+                              <div className="mt-2 flex flex-col gap-2 p-3 bg-slate-50/50 border border-slate-200 rounded-xl shadow-sm text-sm text-slate-600 max-w-none overflow-x-auto">
+                                 {msg.steps && msg.steps.length > 0 ? (
+                                   msg.steps.map((step, idx) => (
+                                     <div key={idx} className="flex flex-col gap-1.5 p-2 bg-white rounded-lg border border-slate-100 shadow-sm">
+                                         <div className="flex items-center gap-2 font-medium text-slate-700">
+                                             {step.status === 'running' ? (
+                                                <Icons.Loader className="w-3.5 h-3.5 text-indigo-500" />
+                                             ) : (
+                                                <span className="text-green-500">✓</span>
+                                             )}
+                                             <span>{step.label}</span>
+                                         </div>
+                                         {step.content && (
+                                             <div className="text-xs text-slate-500 pl-6 border-l-2 border-slate-100 ml-1.5 prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
+                                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                                           </div>
+                                         )}
+                                     </div>
+                                   ))
+                                 ) : (
+                                   <div className="p-2 bg-white rounded-lg border border-slate-100 shadow-sm prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
+                                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.reasoning || ''}</ReactMarkdown>
+                                   </div>
+                                 )}
+                              </div>
+                            </details>
+                          </div>
+                        )}
+
+                        {/* Content Block */}
+                        {msg.content && (
+                          <div 
+                            className={`
+                                p-3.5 text-sm leading-relaxed shadow-sm whitespace-pre-wrap w-fit
+                                ${msg.role === 'user' 
+                                ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-indigo-200' 
+                                : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm shadow-sm prose prose-sm prose-slate max-w-none overflow-x-auto prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700'
+                                }
+                            `}
+                          >
+                            {msg.role === 'user' ? (
+                               msg.content
+                            ) : (
+                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Empty state while generating */}
+                        {msg.role === 'agent' && !msg.content && !msg.reasoning && isSending && (
+                           <div className="flex gap-1 items-center px-4 py-3 text-sm shadow-sm bg-white border border-indigo-100 text-indigo-600 rounded-2xl rounded-tl-sm">
+                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                           </div>
+                        )}
+                      </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Stream Progress Indicator */}
+            {isSending && streamPhase !== 'done' && (
+              <div className="flex gap-3 flex-row animate-in fade-in duration-300">
+                <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm mt-1 ring-2 ring-white bg-white text-indigo-500 border border-slate-100 opacity-50">
+                  <Icons.Bot className="w-5 h-5" />
+                </div>
+                <div className="flex flex-col max-w-[85%]">
+                  <div className="px-4 py-3 text-sm shadow-sm bg-white border border-indigo-100 text-indigo-600 rounded-2xl rounded-tl-sm flex items-center gap-3">
+                    <div className="flex gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                     </div>
                   </div>
                 </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="p-3 bg-white border-t border-gray-100 shrink-0">
-              {messages.length <= 1 && (
-                <div className="flex flex-wrap gap-2 mb-2.5">
-                  {quickActions.map((action, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setInputValue(action.text)}
-                      className="text-xs px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 transition border border-indigo-100 font-medium"
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex items-end gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50 transition-all">
-                <textarea
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={isSending ? 'AI 正在生成...' : '描述你想制作的 PPT...'}
-                  disabled={isSending}
-                  className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-gray-800 placeholder:text-gray-400 resize-none max-h-32 min-h-[44px] scrollbar-thin scrollbar-thumb-gray-200"
-                  rows={1}
-                  style={{ height: 'auto', minHeight: '44px' }}
-                />
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!inputValue.trim() || isSending}
-                  className={`p-2 rounded-lg transition-all flex items-center justify-center ${
-                    inputValue.trim() && !isSending
-                      ? 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 active:scale-95'
-                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                  }`}
-                >
-                  {isSending ? <Icons.Loader className="w-4 h-4" /> : <Icons.Send className="w-4 h-4" />}
-                </button>
               </div>
-              <p className="text-center mt-2 text-[10px] text-gray-400">
-                {isSending ? 'AI 正在生成 PPT...' : '⌘/Ctrl + Enter 发送'}
-              </p>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <div className="p-4 bg-white border-t border-slate-100 shrink-0 relative z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.02)]">
+            {/* Quick Actions - Only show when chat is empty (just greeting) */}
+            {messages.length <= 1 && (
+              <div className="flex flex-wrap gap-2 mb-3 px-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {quickActions.map((action, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setInputValue(action.text);
+                      setTimeout(() => {
+                         const textarea = document.querySelector('textarea');
+                         if (textarea) {
+                             textarea.style.height = 'auto';
+                             textarea.style.height = Math.min(textarea.scrollHeight, 240) + 'px';
+                         }
+                      }, 10);
+                    }}
+                    className="text-xs px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 transition-colors border border-indigo-100 font-medium shadow-sm text-left"
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Context Toolbar */}
+            <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="text-[10px] text-slate-400 ml-auto hidden sm:inline-block">
+                    <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 发送, <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Shift</kbd> + <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 换行
+                </span>
+            </div>
+            <div className="relative flex items-end gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50/50 focus-within:bg-white transition-all shadow-inner">
+              <textarea
+                value={inputValue}
+                onChange={(e) => {
+                  setInputValue(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder={isSending ? "AI 正在生成中..." : "输入您的问题，描述您的需求..."}
+                disabled={isSending}
+                className="flex-1 px-3 py-2 bg-transparent border-none focus:ring-0 text-sm text-slate-800 placeholder:text-slate-400 resize-none max-h-60 min-h-[50px] scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent disabled:opacity-50 disabled:cursor-not-allowed outline-none"
+                rows={1}
+                style={{ height: 'auto', minHeight: '50px' }}
+              />
+              <div className="flex gap-1 mb-0.5 shrink-0">
+                  {isSending ? (
+                    <button
+                      onClick={handleStopStream}
+                      className="p-2.5 rounded-lg transition-all duration-200 flex items-center justify-center bg-red-100 text-red-600 hover:bg-red-200 shadow-sm"
+                      title="停止生成"
+                    >
+                      <Icons.Square className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!inputValue.trim()}
+                      className={`
+                        p-2.5 rounded-lg transition-all duration-200 flex items-center justify-center
+                        ${inputValue.trim()
+                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 active:scale-95' 
+                          : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        }
+                      `}
+                      title="发送消息"
+                    >
+                      <Icons.Send className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={handleRestartSession}
+                    disabled={isSending}
+                    className="p-2.5 rounded-lg bg-white text-slate-400 hover:bg-slate-50 hover:text-indigo-600 transition-all duration-200 border border-slate-200 hover:border-indigo-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="重启对话"
+                  >
+                    <Icons.Plus className="w-4 h-4" />
+                  </button>
+              </div>
+            </div>
+            <div className="text-center mt-2.5">
+                <p className="text-[10px] text-slate-400 font-medium">
+                  {isSending ? (streamProgress || 'AI is generating response...') : 'AI can make mistakes. Please verify important info.'}
+                </p>
             </div>
           </div>
         </div>
       </div>
-
-      {/* ===== Fullscreen Presentation ===== */}
+    </div>
+{/* ===== Fullscreen Presentation ===== */}
       {isFullscreen && pptData && (
         <div
           className="fixed inset-0 z-50 bg-black flex items-center justify-center"
@@ -2583,7 +2845,7 @@ export default function PptPage() {
               maxWidth: 'calc(100vh * 16 / 9)',
             }}
           >
-            <div className="w-full h-full relative">
+            <div className="w-full h-full relative" style={{ fontFamily: "\"PingFang SC\", \"Microsoft YaHei\", system-ui, -apple-system, sans-serif", letterSpacing: "0.2px" }}>
               {renderThemeDecor(pptData.slides[currentSlideIndex], currentSlideIndex)}
               {renderSlideContent(pptData.slides[currentSlideIndex], currentSlideIndex)}
             </div>
