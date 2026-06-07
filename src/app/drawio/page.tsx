@@ -550,7 +550,7 @@ export default function Home() {
       // Clear the canvas before starting a new stream
       if (drawioRef.current && currentSessionId === currentSessionRef.current) {
         try {
-          drawioRef.current.load({ xml: '' });
+          drawioRef.current.load({ xml: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>' });
         } catch (e) {
           console.error('Failed to clear canvas:', e);
         }
@@ -593,6 +593,14 @@ export default function Home() {
                 nodeCount = 0;
                 edgeCount = 0;
                 receivedDrawioDone = false;
+                // Preemptively clear the canvas so we can cleanly redraw the reviewer's output
+                if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                  try {
+                    drawioRef.current.load({ xml: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>' });
+                  } catch (e) {
+                    console.error('Failed to clear canvas for reviewer:', e);
+                  }
+                }
               }
 
               hasIncrementalContent = true;
@@ -600,7 +608,7 @@ export default function Home() {
               setStreamProgress(`添加节点 #${nodeCount}: ${chunk.label}`);
 
               // Sometimes AI returns empty XML or malformed tags, skip adding to prevent crashing draw.io
-              if (chunk.xml && chunk.xml.trim() !== '') {
+              if (chunk.xml && chunk.xml.trim() !== '' && chunk.xml.includes('<mxCell')) {
                   accumulatedNodes.push(chunk.xml);
               }
 
@@ -625,13 +633,20 @@ export default function Home() {
                 nodeCount = 0;
                 edgeCount = 0;
                 receivedDrawioDone = false;
+                if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+                  try {
+                    drawioRef.current.load({ xml: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>' });
+                  } catch (e) {
+                    console.error('Failed to clear canvas for reviewer:', e);
+                  }
+                }
               }
 
               hasIncrementalContent = true;
               edgeCount++;
               setStreamProgress(`添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
 
-              if (chunk.xml && chunk.xml.trim() !== '') {
+              if (chunk.xml && chunk.xml.trim() !== '' && chunk.xml.includes('<mxCell')) {
                   accumulatedEdges.push(chunk.xml);
               }
 
@@ -655,26 +670,32 @@ export default function Home() {
               finalXml = chunk.content;
               setStreamProgress('🎨 绘制完成，正在加载最终图表...');
 
-              // Final full load to ensure consistency
-              if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml && finalXml.trim() !== '') {
-                try {
-                  drawioRef.current.load({ xml: finalXml });
-                } catch (e) {
-                  console.error('Failed to load final diagram:', e);
-                }
-              }
+              // Only render the diagram and end the process if this is the final Reviewer output (or if there is no reviewer)
+              // We identify the final output if phase is 'drawing' or 'done' (since we removed reviewer)
+              const isFinalStage = phase === 'drawing' || phase === 'done';
+              
+              if (isFinalStage) {
+                  // Final full load to ensure consistency
+                  if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml && finalXml.trim() !== '') {
+                    try {
+                      drawioRef.current.load({ xml: finalXml });
+                    } catch (e) {
+                      console.error('Failed to load final diagram:', e);
+                    }
+                  }
 
-              // Save final XML to session
-              setSessions(prev => prev.map(session => {
-                if (session.id === currentSessionId) {
-                  return {
-                    ...session,
-                    drawIoXml: finalXml,
-                    lastModified: Date.now()
-                  };
-                }
-                return session;
-              }));
+                  // Save final XML to session
+                  setSessions(prev => prev.map(session => {
+                    if (session.id === currentSessionId) {
+                      return {
+                        ...session,
+                        drawIoXml: finalXml,
+                        lastModified: Date.now()
+                      };
+                    }
+                    return session;
+                  }));
+              }
               
               break;
             }
@@ -685,33 +706,80 @@ export default function Home() {
               receivedDrawioDone = true;
               finalXml = chunk.content;
 
-              if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml && finalXml.trim() !== '') {
-                try {
-                  drawioRef.current.load({ xml: finalXml });
-                } catch (e) {
-                  console.error('Failed to load diagram:', e);
-                }
-              }
+              const isFinalStage = phase === 'drawing' || phase === 'done';
 
-              setSessions(prev => prev.map(session => {
-                if (session.id === currentSessionId) {
-                  return {
-                    ...session,
-                    drawIoXml: finalXml,
-                    lastModified: Date.now()
-                  };
-                }
-                return session;
-              }));
+              if (isFinalStage) {
+                  if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml && finalXml.trim() !== '') {
+                    try {
+                      drawioRef.current.load({ xml: finalXml });
+                    } catch (e) {
+                      console.error('Failed to load diagram:', e);
+                    }
+                  }
+
+                  setSessions(prev => prev.map(session => {
+                    if (session.id === currentSessionId) {
+                      return {
+                        ...session,
+                        drawIoXml: finalXml,
+                        lastModified: Date.now()
+                      };
+                    }
+                    return session;
+                  }));
+              }
               
               break;
             }
 
             case 'user': {
               // AI returns a text response (not a diagram)
-              agentTextContent += chunk.content;
-              accumulatedContent += chunk.content;
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
+              if (chunk.content) {
+                  // Sometimes the backend might leak raw JSON payload strings if the filter didn't catch it
+                  let displayContent = chunk.content;
+                  const trimmedContent = chunk.content.trim();
+                  
+                  // If it looks like a raw JSON string containing type="user", parse it and extract the content
+                  if (trimmedContent.startsWith('{') && trimmedContent.includes('"type"') && trimmedContent.includes('"user"')) {
+                      try {
+                          const parsed = JSON.parse(trimmedContent);
+                          if (parsed.content) {
+                              displayContent = parsed.content;
+                          }
+                      } catch (e) {
+                          // Try regex extraction if JSON parse fails due to streaming fragmentation
+                          const match = trimmedContent.match(/"content"\s*:\s*"([^"]+)"/);
+                          if (match && match[1]) {
+                              displayContent = match[1].replace(/\\n/g, '\n');
+                          }
+                      }
+                  }
+
+                  // We treat 'user' type responses during stream as intermediate conversational feedback
+                  agentTextContent += displayContent;
+                  
+                  // Make sure we only append actual text to the chat bubble, and skip any raw XML artifacts 
+                  const isRawXmlLeak = displayContent.trim().startsWith('<mxCell') || displayContent.trim().startsWith('<mxGraphModel');
+                  
+                  if (!isRawXmlLeak) {
+                      // Prevent duplicate consecutive lines
+                      const newLines = displayContent.split('\n');
+                      const currentLines = accumulatedContent.split('\n');
+                      const lastLine = currentLines[currentLines.length - 1]?.trim();
+                      
+                      let shouldAppend = true;
+                      if (newLines.length === 1 && newLines[0].trim() === lastLine) {
+                          shouldAppend = false;
+                      }
+
+                      if (shouldAppend) {
+                          const padding = accumulatedContent && !accumulatedContent.endsWith('\n\n') ? '\n\n' : '';
+                          accumulatedContent += padding + displayContent;
+                      }
+                  }
+                  
+                  setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
+              }
               break;
             }
 
@@ -731,7 +799,10 @@ export default function Home() {
                      !text.includes('"drawio_edge"') &&
                      !text.includes('"drawio_done"')) {
                      
-                     accumulatedReasoning += chunk.content + '\n';
+                     // Don't append if the text is exactly the same as the last line to avoid repetitive status spam
+                     if (!accumulatedReasoning.endsWith(text + '\n')) {
+                         accumulatedReasoning += chunk.content + '\n';
+                     }
                      updateStep(phase, currentPhaseLabel, chunk.content);
                      setStreamProgress(text.substring(0, 50) + '...');
                      setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, reasoning: accumulatedReasoning, steps: [...accumulatedSteps] } : m));
@@ -757,8 +828,14 @@ export default function Home() {
                      !text.includes('"drawio_edge"') &&
                      !text.includes('"drawio_done"')) {
                      
-                      updateStep(phase, currentPhaseLabel, chunk.content);
-                      setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
+                      // Avoid repeating the exact same text token
+                      const stepIndex = accumulatedSteps.findIndex(s => s.phase === phase);
+                      if (stepIndex >= 0 && accumulatedSteps[stepIndex].content.endsWith(chunk.content + '\n')) {
+                          // Skip duplicate token append
+                      } else {
+                          updateStep(phase, currentPhaseLabel, chunk.content);
+                          setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
+                      }
                   }
               }
               break;
