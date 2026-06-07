@@ -2931,6 +2931,117 @@ ${content}`;
         </div>
       </div>
     </div>
+      {showApiConfig && (
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20 flex flex-col max-h-[90vh]">
+                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-2">
+                      <Icons.Sparkles className="w-5 h-5 text-indigo-500" />
+                      <h2 className="text-lg font-bold text-slate-800">自定义模型配置</h2>
+                    </div>
+                    <button
+                        onClick={() => {
+                          setShowApiConfig(false);
+                          setEditingModel(null);
+                        }}
+                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                    >
+                        <Icons.Close className="w-5 h-5" />
+                    </button>
+                </div>
+
+                <div className="flex flex-1 overflow-hidden">
+                    {/* List of Models */}
+                    <div className="w-1/3 border-r border-slate-100 bg-slate-50 flex flex-col">
+                        <div className="p-3">
+                            <button
+                                onClick={handleAddNewModel}
+                                className="w-full flex items-center justify-center gap-2 py-2 bg-white border border-indigo-200 text-indigo-600 rounded-lg hover:bg-indigo-50 transition-colors shadow-sm text-sm font-medium"
+                            >
+                                <Icons.Plus className="w-4 h-4" /> 添加模型
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                            {customModels.map(model => (
+                                <div
+                                    key={model.id}
+                                    onClick={() => setEditingModel(model)}
+                                    className={`p-3 rounded-xl border cursor-pointer transition-all ${editingModel?.id === model.id ? 'bg-indigo-50 border-indigo-200 shadow-sm ring-1 ring-indigo-100' : 'bg-white border-slate-200 hover:border-indigo-100 hover:shadow-sm'}`}
+                                >
+                                    <div className="flex items-center justify-between mb-1">
+                                        <div className="font-semibold text-sm text-slate-800 truncate pr-2">{model.name}</div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            {/* Toggle Switch */}
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const newModels = customModels.map(m => m.id === model.id ? {...m, enabled: !m.enabled} : m);
+                                                    saveCustomModels(newModels);
+                                                    if (!(!model.enabled) && selectedCustomModelId === model.id) {
+                                                        setSelectedCustomModelId('default');
+                                                    }
+                                                }}
+                                                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none ${model.enabled ? 'bg-indigo-500' : 'bg-slate-300'}`}
+                                            >
+                                                <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${model.enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                                            </button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteModel(model.id); }} className="text-slate-400 hover:text-red-500 ml-1">
+                                                <Icons.Trash className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 truncate">{model.model}</div>
+                                </div>
+                            ))}
+                            {customModels.length === 0 && (
+                                <div className="text-center text-xs text-slate-400 py-6">
+                                    暂无自定义模型<br/>点击上方按钮添加
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Edit Form */}
+                    <div className="flex-1 p-6 overflow-y-auto bg-white">
+                        {editingModel ? (
+                            <div className="space-y-4 animate-in fade-in duration-200">
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">展示名称</label>
+                                    <input type="text" value={editingModel.name} onChange={e => setEditingModel({...editingModel, name: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="例如：我的GPT-4o" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">模型名称 (Model)</label>
+                                    <input type="text" value={editingModel.model} onChange={e => setEditingModel({...editingModel, model: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="例如：gpt-4o" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">Base URL</label>
+                                    <input type="text" value={editingModel.baseUrl} onChange={e => setEditingModel({...editingModel, baseUrl: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="例如：https://api.openai.com" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">API Key</label>
+                                    <input type="password" value={editingModel.apiKey} onChange={e => setEditingModel({...editingModel, apiKey: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="sk-..." />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-700 mb-1">Completions Path (可选)</label>
+                                    <input type="text" value={editingModel.completionsPath} onChange={e => setEditingModel({...editingModel, completionsPath: e.target.value})} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="默认为 v1/chat/completions" />
+                                </div>
+                                <div className="pt-2 flex justify-end">
+                                    <button onClick={handleSaveEditingModel} className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 shadow-sm transition-all text-sm">
+                                        保存配置
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                                <Icons.Sparkles className="w-12 h-12 mb-3 opacity-20" />
+                                <p className="text-sm">选择左侧模型进行编辑，或点击添加</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
 {/* ===== Fullscreen Presentation ===== */}
       {isFullscreen && pptData && (
         <div
