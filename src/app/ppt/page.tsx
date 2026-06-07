@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getUserInfo, clearUserInfo } from '@/utils/cookie';
-import { agentApi } from '@/api/agent';
+import { agentApi, StatusChunk, UserChunk, ErrorChunk, PptRawChunk } from '@/api/agent';
 import { AiAgentConfigResponseDTO } from '@/types/api';
 import pptxgen from 'pptxgenjs';
 
@@ -378,6 +378,142 @@ const getSafeContentArea = (layout: string, theme: PptTheme): { x: number; y: nu
   }
   // Default: entire slide minus small margins
   return { x: 0.5, y: 0.5, w: W - 1.0, h: H - bottomBar - 0.5 };
+};
+
+// --- PPT Data Normalization (shared) ---
+const stripMdCodeBlock = (s: string): string => s.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+const normalizePptSlide = (slide: any): PptSlide => {
+  const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline','icon','number','radius','shadow','opacity','gradient','thickness','lineSpacing','letterSpacing']);
+  return {
+    ...slide,
+    elements: (slide.elements || []).map((el: any) => {
+      // Normalize content field
+      if (el.content === undefined || el.content === null || el.content === '') {
+        el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
+        if (!el.content) {
+          for (const key of Object.keys(el)) {
+            if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
+              el.content = el[key];
+              break;
+            }
+          }
+        }
+      }
+      // Normalize kind
+      if (!el.kind) {
+        if (el.rows && Array.isArray(el.rows)) el.kind = 'table';
+        else if (el.icon && !el.content) el.kind = 'icon';
+        else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) el.kind = 'image';
+        else if (el.content) el.kind = 'text';
+        else if (el.fill) el.kind = 'shape';
+        else el.kind = 'text';
+      }
+      if (el.kind === 'icon' && !el.content && el.icon) el.content = el.icon;
+      return el;
+    }),
+  };
+};
+
+const normalizePptData = (data: PptData): PptData => {
+  return {
+    ...data,
+    slides: data.slides.map(normalizePptSlide),
+  };
+};
+
+const tryParsePpt = (raw: unknown): PptData | null => {
+  try {
+    let parsedObj: any = null;
+    if (typeof raw === 'string') {
+      let clean = stripMdCodeBlock(raw);
+      if (clean.match(/\}\s*\{/)) {
+        try {
+          const arr = JSON.parse(`[${clean.replace(/\}\s*\{/g, '},{')}]`);
+          parsedObj = arr.find((item: any) => item.type === 'ppt' || (item.slides && item.title)) || arr[arr.length - 1];
+        } catch(e) {}
+      }
+      if (!parsedObj) {
+        parsedObj = JSON.parse(clean);
+      }
+    } else {
+      parsedObj = raw;
+    }
+    const findPptData = (obj: any, depth: number = 0): PptData | null => {
+      if (obj === null || obj === undefined || depth > 8) return null;
+      if (obj.title && Array.isArray(obj.slides)) return obj as PptData;
+      if (Array.isArray(obj.slides) && obj.slides.length > 0) return obj as PptData;
+      const keys = ['content', 'data', 'result', 'output', 'response', 'body'];
+      for (const key of keys) {
+        if (obj[key] !== undefined && obj[key] !== null) {
+          const inner = typeof obj[key] === 'string' ? (() => { try { return JSON.parse(stripMdCodeBlock(obj[key])); } catch { return null; } })() : obj[key];
+          if (inner) {
+            const found = findPptData(inner, depth + 1);
+            if (found) return found;
+          }
+        }
+      }
+      return null;
+    };
+    return findPptData(parsedObj);
+  } catch { return null; }
+};
+
+/**
+ * Try to extract completed slides from a partially accumulated JSON string.
+ * Uses a bracket-matching approach to find the deepest complete JSON prefix.
+ */
+const tryExtractPartialSlides = (accumulated: string): PptSlide[] | null => {
+  try {
+    const clean = stripMdCodeBlock(accumulated);
+    // First, try direct full parse
+    try {
+      const fullParsed = JSON.parse(clean);
+      const pptData = tryParsePpt(fullParsed);
+      if (pptData && pptData.slides && pptData.slides.length > 0) {
+        return pptData.slides;
+      }
+    } catch {}
+
+    // Partial parse: find the "slides" array and extract complete entries
+    const slidesStart = clean.indexOf('"slides"');
+    if (slidesStart < 0) return null;
+
+    // Find the opening bracket of the slides array
+    const arrayStart = clean.indexOf('[', slidesStart);
+    if (arrayStart < 0) return null;
+
+    // Scan for complete slide objects (each starts with { and has "slideIndex")
+    const completeSlides: PptSlide[] = [];
+    let searchFrom = arrayStart + 1;
+    let depth = 0;
+    let slideStart = -1;
+
+    for (let i = arrayStart + 1; i < clean.length; i++) {
+      const ch = clean[i];
+      if (ch === '{') {
+        if (depth === 0) slideStart = i;
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0 && slideStart >= 0) {
+          // We have a complete top-level object
+          const objStr = clean.substring(slideStart, i + 1);
+          try {
+            const slideObj = JSON.parse(objStr);
+            if (slideObj && (slideObj.slideIndex !== undefined || slideObj.elements)) {
+              completeSlides.push(slideObj);
+            }
+          } catch {}
+          slideStart = -1;
+        }
+      }
+    }
+
+    return completeSlides.length > 0 ? completeSlides : null;
+  } catch {
+    return null;
+  }
 };
 
 const generatePptx = (data: PptData, theme: PptTheme) => {
@@ -1019,252 +1155,172 @@ export default function PptPage() {
         setSessionId(activeBackendSessionId);
       }
 
-      // Send message
-      const chatRes = await agentApi.chat({
-        agentId: selectedAgentId,
-        userId: currentUser,
-        sessionId: activeBackendSessionId,
-        message: enrichedContent,
-      });
+      // --- Streaming PPT generation ---
+      // Use chatStream like draw.io for progressive rendering
+      let accumulatedText = '';
+      let streamPhase: 'analyzing' | 'generating' | 'reviewing' | 'done' = 'analyzing';
+      let renderedSlideCount = 0;
+      let pptTitle = '';
+      const currentSessionIdRef = currentSessionId;
 
-      const { type, content: resContent } = chatRes.data;
+      // Show initial progress message
+      const progressMsgId = (Date.now() + 1).toString();
+      setMessages((prev) => [
+        ...prev,
+        { id: progressMsgId, role: 'agent', content: '🔍 正在分析需求...', timestamp: Date.now() },
+      ]);
 
-      // Helper: try to parse response as PPT data regardless of type field
-      const stripMdCodeBlock = (s: string): string => s.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
-      const tryParsePpt = (raw: unknown): PptData | null => {
-        try {
-          let parsedObj: any = null;
-          if (typeof raw === 'string') {
-            let clean = stripMdCodeBlock(raw);
-            // Handle concatenated JSON objects (e.g. AI outputs {"type":"user"...} and {"type":"ppt"...} together)
-            if (clean.match(/\}\s*\{/)) {
-              try {
-                const arr = JSON.parse(`[${clean.replace(/\}\s*\{/g, '},{')}]`);
-                // Prefer PPT data if both exist
-                parsedObj = arr.find((item: any) => item.type === 'ppt' || (item.slides && item.title)) || arr[arr.length - 1];
-              } catch(e) {}
+      const updateProgress = (text: string) => {
+        setMessages((prev) =>
+          prev.map((m) => m.id === progressMsgId ? { ...m, content: text } : m)
+        );
+      };
+
+      const controller = await agentApi.chatStream(
+        {
+          agentId: selectedAgentId,
+          userId: currentUser,
+          sessionId: activeBackendSessionId,
+          message: enrichedContent,
+        },
+        // onEvent
+        (event) => {
+          const { phase, chunk } = event;
+
+          // Update stream phase based on event phase
+          if (phase === 'analyzing') streamPhase = 'analyzing';
+          else if (phase === 'drawing' || phase === 'generating') streamPhase = 'generating';
+          else if (phase === 'reviewing') streamPhase = 'reviewing';
+
+          // Handle ppt_raw: incremental text that may contain PPT JSON
+          if (chunk.type === 'ppt_raw') {
+            const rawContent = (chunk as PptRawChunk).raw || '';
+            accumulatedText += rawContent;
+
+            // Try progressive slide extraction from accumulated text
+            const partialSlides = tryExtractPartialSlides(accumulatedText);
+            if (partialSlides && partialSlides.length > renderedSlideCount) {
+              const newSlides = partialSlides.map(normalizePptSlide);
+              const titleMatch = accumulatedText.match(/"title"\s*:\s*"([^"]+)"/);
+              if (titleMatch) pptTitle = titleMatch[1];
+
+              setPptData({ title: pptTitle || 'PPT', slides: newSlides });
+              renderedSlideCount = newSlides.length;
             }
-            if (!parsedObj) {
-              parsedObj = JSON.parse(clean);
+
+            const phaseEmoji = streamPhase === 'analyzing' ? '🔍' : streamPhase === 'generating' ? '🎨' : streamPhase === 'reviewing' ? '✅' : '🤖';
+            const phaseText = streamPhase === 'analyzing' ? '分析需求' : streamPhase === 'generating' ? '生成内容' : streamPhase === 'reviewing' ? '检查优化' : '处理中';
+            updateProgress(`${phaseEmoji} 正在${phaseText} · 已渲染 ${renderedSlideCount} 页...`);
+          } else if (chunk.type === 'status') {
+            const statusContent = (chunk as StatusChunk).content || '';
+            accumulatedText += statusContent;
+
+            // Update phase from content hints
+            if (statusContent.includes('分析') || statusContent.includes('analys')) {
+              streamPhase = 'analyzing';
+            } else if (statusContent.includes('生成') || statusContent.includes('generat') || statusContent.includes('绘制') || statusContent.includes('PPT')) {
+              streamPhase = 'generating';
+            } else if (statusContent.includes('检查') || statusContent.includes('review') || statusContent.includes('优化')) {
+              streamPhase = 'reviewing';
             }
-          } else {
-            parsedObj = raw;
+
+            // Try progressive slide extraction from accumulated text
+            const partialSlides = tryExtractPartialSlides(accumulatedText);
+            if (partialSlides && partialSlides.length > renderedSlideCount) {
+              const newSlides = partialSlides.map(normalizePptSlide);
+              const titleMatch = accumulatedText.match(/"title"\s*:\s*"([^"]+)"/);
+              if (titleMatch) pptTitle = titleMatch[1];
+
+              setPptData({ title: pptTitle || 'PPT', slides: newSlides });
+              renderedSlideCount = newSlides.length;
+            }
+
+            const phaseEmoji = streamPhase === 'analyzing' ? '🔍' : streamPhase === 'generating' ? '🎨' : streamPhase === 'reviewing' ? '✅' : '🤖';
+            const phaseText = streamPhase === 'analyzing' ? '分析需求' : streamPhase === 'generating' ? '生成内容' : streamPhase === 'reviewing' ? '检查优化' : '处理中';
+            updateProgress(`${phaseEmoji} 正在${phaseText}${renderedSlideCount > 0 ? ` · 已完成 ${renderedSlideCount} 页` : ''}...`);
+          } else if (chunk.type === 'user') {
+            // AI asks for more info
+            updateProgress((chunk as UserChunk).content || '请补充信息');
+          } else if (chunk.type === 'error') {
+            updateProgress(`❌ ${(chunk as ErrorChunk).content || '生成失败'}`);
+          } else if (chunk.type === 'done' || chunk.type === 'drawio_done') {
+            streamPhase = 'done';
           }
-
-          // Recursive search: find PptData at any depth
-          const findPptData = (obj: any, depth: number = 0): PptData | null => {
-            if (obj === null || obj === undefined || depth > 8) return null;
-            // Direct match: has title + slides
-            if (obj.title && Array.isArray(obj.slides)) return obj as PptData;
-            // Has slides array even without title
-            if (Array.isArray(obj.slides) && obj.slides.length > 0) return obj as PptData;
-            // Unwrap common wrappers
-            const keys = ['content', 'data', 'result', 'output', 'response', 'body'];
-            for (const key of keys) {
-              if (obj[key] !== undefined && obj[key] !== null) {
-                const inner = typeof obj[key] === 'string' ? (() => { try { return JSON.parse(stripMdCodeBlock(obj[key])); } catch { return null; } })() : obj[key];
-                if (inner) {
-                  const found = findPptData(inner, depth + 1);
-                  if (found) return found;
+        },
+        // onError
+        (error: Error) => {
+          console.error('Stream error:', error);
+          updateProgress(`❌ 连接错误: ${error.message}`);
+        },
+        // onComplete
+        () => {
+          // Stream finished — try to parse accumulated text as PPT data
+          // (fallback for non-incremental streams)
+          if (accumulatedText && renderedSlideCount === 0) {
+            const detectedPpt = tryParsePpt(accumulatedText);
+            if (detectedPpt) {
+              const normalizedPpt = normalizePptData(detectedPpt);
+              setPptData(normalizedPpt);
+              setCurrentSlideIndex(0);
+              renderedSlideCount = normalizedPpt.slides.length;
+              setSessions((prev) =>
+                prev.map((session) =>
+                  session.id === currentSessionIdRef
+                    ? { ...session, pptData: normalizedPpt, lastModified: Date.now() }
+                    : session
+                )
+              );
+              updateProgress(`✅ PPT 已生成！共 ${normalizedPpt.slides.length} 页，可以预览或下载。`);
+            } else {
+              // Try to extract user message from accumulated text
+              let displayContent = accumulatedText;
+              if (accumulatedText.trim().startsWith('{')) {
+                try {
+                  const parsed = JSON.parse(stripMdCodeBlock(accumulatedText));
+                  if (parsed.slides && Array.isArray(parsed.slides)) {
+                    const norm = normalizePptData(parsed);
+                    setPptData(norm);
+                    setCurrentSlideIndex(0);
+                    setSessions((prev) =>
+                      prev.map((session) =>
+                        session.id === currentSessionIdRef
+                          ? { ...session, pptData: norm, lastModified: Date.now() }
+                          : session
+                      )
+                    );
+                    updateProgress(`✅ PPT 已生成！共 ${norm.slides.length} 页。`);
+                  } else {
+                    displayContent = parsed.message || parsed.content || parsed.text || '收到响应。';
+                    if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
+                    updateProgress(displayContent);
+                  }
+                } catch {
+                  updateProgress('收到响应，但无法解析 PPT 数据。');
                 }
               }
             }
-            return null;
-          };
-
-          return findPptData(parsedObj);
-        } catch { return null; }
-      };
-
-      // First: try to detect PPT data in any response type
-      const detectedPpt = tryParsePpt(resContent);
-      
-      // If we received concatenated data but parsed PPT out of it successfully,
-      // we might want to still show the "user" text if it was asking a question.
-      // But usually just showing the PPT is fine.
-      if (detectedPpt) {
-        // Normalize elements: ensure every element has 'content' field
-        // AI may return text in 'text', 'value', 'label', 'body' instead of 'content'
-        const normalizePptData = (data: PptData): PptData => {
-          return {
-            ...data,
-            slides: data.slides.map((slide) => ({
-              ...slide,
-              elements: slide.elements.map((el: any) => {
-                // Normalize content field: AI may use various field names
-                if (el.content === undefined || el.content === null || el.content === '') {
-                  // Try common alternative names, then scan all string fields
-                  el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
-                  // Last resort: find the first string field that isn't a known meta field
-                  if (!el.content) {
-                    const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline','icon','number','radius','shadow','opacity','gradient','thickness','lineSpacing','letterSpacing']);
-                    for (const key of Object.keys(el)) {
-                      if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
-                        el.content = el[key];
-                        break;
-                      }
-                    }
-                  }
-                }
-                // Normalize kind field: if missing, infer from content
-                if (!el.kind) {
-                  if (el.rows && Array.isArray(el.rows)) {
-                    el.kind = 'table';
-                  } else if (el.icon && !el.content) {
-                    el.kind = 'icon';
-                  } else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) {
-                    el.kind = 'image';
-                  } else if (el.content) {
-                    el.kind = 'text';
-                  } else if (el.fill) {
-                    el.kind = 'shape';
-                  } else {
-                    el.kind = 'text'; // default
-                  }
-                }
-                // For icon kind: if icon field exists, use it as content fallback
-                if (el.kind === 'icon' && !el.content && el.icon) {
-                  el.content = el.icon;
-                }
-                return el;
-              }),
-            })),
-          };
-        };
-        const normalizedPpt = normalizePptData(detectedPpt);
-        setPptData(normalizedPpt);
-        setCurrentSlideIndex(0);
-        setSessions((prev) =>
-          prev.map((session) => {
-            if (session.id === currentSessionId) {
-              return { ...session, pptData: normalizedPpt, lastModified: Date.now() };
-            }
-            return session;
-          })
-        );
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: (Date.now() + 1).toString(),
-            role: 'agent',
-            content: `✅ PPT 已生成！共 ${detectedPpt.slides?.length || 0} 页，可以预览或下载。`,
-            timestamp: Date.now(),
-          },
-        ]);
-      } else if (type === 'user') {
-        // AI asks for more info or returns data with type='user'
-        // Attempt to clean it up in case it contains concatenated JSON
-        let displayContent = resContent;
-        if (typeof resContent === 'string' && resContent.match(/\}\s*\{/)) {
-          try {
-            const clean = stripMdCodeBlock(resContent);
-            const arr = JSON.parse(`[${clean.replace(/\}\s*\{/g, '},{')}]`);
-            const userMsg = arr.find((item: any) => item.type === 'user');
-            if (userMsg && userMsg.content) displayContent = userMsg.content;
-          } catch(e) {}
-        }
-        // If displayContent is still JSON-like, try to extract meaningful text
-        if (typeof displayContent === 'string' && displayContent.trim().startsWith('{')) {
-          try {
-            const parsed = JSON.parse(stripMdCodeBlock(displayContent));
-            // Check if it's actually PPT data that was missed
-            if (parsed.slides && Array.isArray(parsed.slides)) {
-              // Normalize elements (same logic as main branch)
-              const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline']);
-              const normSlides = parsed.slides.map((s: any) => ({
-                ...s,
-                elements: s.elements?.map((el: any) => {
-                  // Normalize content
-                  if (el.content === undefined || el.content === null || el.content === '') {
-                    el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
-                    if (!el.content) {
-                      for (const key of Object.keys(el)) {
-                        if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
-                          el.content = el[key];
-                          break;
-                        }
-                      }
-                    }
-                  }
-                  // Normalize kind
-                  if (!el.kind) {
-                    if (el.rows && Array.isArray(el.rows)) el.kind = 'table';
-                    else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) el.kind = 'image';
-                    else if (el.content) el.kind = 'text';
-                    else if (el.fill) el.kind = 'shape';
-                    else el.kind = 'text';
-                  }
-                  return el;
-                }) || [],
-              }));
-              const normParsed = { ...parsed, slides: normSlides };
-              displayContent = `✅ PPT 已生成！共 ${normSlides.length} 页，可以预览或下载。`;
-              setPptData(normParsed);
-              setCurrentSlideIndex(0);
+          } else if (renderedSlideCount > 0) {
+            // Slides were rendered incrementally — try final complete parse for review optimizations
+            const finalPpt = tryParsePpt(accumulatedText);
+            if (finalPpt && finalPpt.slides.length >= renderedSlideCount) {
+              // Review agent may have modified slides — use the complete version
+              const normalizedPpt = normalizePptData(finalPpt);
+              setPptData(normalizedPpt);
+              renderedSlideCount = normalizedPpt.slides.length;
               setSessions((prev) =>
-                prev.map((session) => {
-                  if (session.id === currentSessionId) {
-                    return { ...session, pptData: normParsed, lastModified: Date.now() };
-                  }
-                  return session;
-                })
+                prev.map((session) =>
+                  session.id === currentSessionIdRef
+                    ? { ...session, pptData: normalizedPpt, lastModified: Date.now() }
+                    : session
+                )
               );
-            } else {
-              displayContent = parsed.message || parsed.text || parsed.content || parsed.info || parsed.question || '收到响应。';
-              if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
             }
-          } catch {
-            // Not valid JSON, show as-is
+            updateProgress(`✅ PPT 已生成！共 ${renderedSlideCount} 页，可以预览或下载。`);
+            setCurrentSlideIndex(0);
           }
         }
-        
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: (Date.now() + 1).toString(),
-            role: 'agent',
-            content: typeof displayContent === 'string' ? displayContent : JSON.stringify(displayContent),
-            timestamp: Date.now(),
-          },
-        ]);
-      } else if (type === 'drawio') {
-        // Agent returned drawio type (wrong agent), inform user
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: (Date.now() + 1).toString(),
-            role: 'agent',
-            content: '⚠️ 当前智能体返回了 Draw.io 格式数据，请切换到 Draw.io 工作区使用，或在 PPT 工作区选择 PPT 专用智能体。',
-            timestamp: Date.now(),
-          },
-        ]);
-      } else {
-        // Fallback - check if content is JSON (shouldn't be shown raw)
-        let displayContent = typeof resContent === 'string' ? resContent : JSON.stringify(resContent);
-        const isJsonLike = typeof displayContent === 'string' && displayContent.trim().startsWith('{') && displayContent.includes('slides');
-        if (isJsonLike) {
-          // Content looks like PPT JSON but couldn't be parsed — still hide it
-          displayContent = '✅ PPT 内容已生成，请查看左侧预览区域。如未显示，请重试。';
-        } else if (typeof displayContent === 'string' && displayContent.trim().startsWith('{')) {
-          // Generic JSON that isn't PPT — try to extract meaningful text
-          try {
-            const parsed = JSON.parse(stripMdCodeBlock(displayContent));
-            displayContent = parsed.message || parsed.text || parsed.content || parsed.info || '收到响应，但格式异常，请重试。';
-            if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
-          } catch {
-            displayContent = '收到响应，但格式异常，请重试。';
-          }
-        }
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: (Date.now() + 1).toString(),
-            role: 'agent',
-            content: displayContent,
-            timestamp: Date.now(),
-          },
-        ]);
-      }
+      );
+
     } catch (error) {
       console.error('Chat error:', error);
       setMessages((prev) => [
@@ -1673,7 +1729,9 @@ export default function PptPage() {
         );
       }
 
-      if (el.kind === 'table' && el.rows) {
+      if (el.kind === 'table' && Array.isArray(el.rows) && el.rows.length > 0) {
+        const safeRows = el.rows.filter((r: any) => Array.isArray(r) && r.length > 0);
+        if (safeRows.length === 0) return null;
         return (
           <div
             key={idx}
@@ -1687,9 +1745,9 @@ export default function PptPage() {
           >
             <table className="w-full border-collapse" style={{ fontSize: '10px' }}>
               <tbody>
-                {el.rows.map((row, ri) => (
+                {safeRows.map((row, ri) => (
                   <tr key={ri}>
-                    {row.map((cell, ci) => (
+                    {row.map((cell: any, ci: number) => (
                       <td
                         key={ci}
                         className="border px-0.5 py-0.5 text-center"
@@ -1700,13 +1758,40 @@ export default function PptPage() {
                           fontWeight: ri === 0 ? 'bold' : 'normal',
                         }}
                       >
-                        {cell}
+                        {cell ?? ''}
                       </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        );
+      }
+
+      if (el.kind === 'image') {
+        return (
+          <div
+            key={idx}
+            className="absolute bg-gray-100 overflow-hidden"
+            style={{
+              left: `${xPct}%`,
+              top: `${yPct}%`,
+              width: `${wPct}%`,
+              height: `${hPct}%`,
+              borderRadius: el.radius ? `${el.radius}px` : '4px',
+              boxShadow: el.shadow ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
+              opacity: el.opacity ?? 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {el.content ? (
+              <img src={el.content} alt="slide image" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <Icons.FilePresentation className="w-8 h-8 text-gray-300" />
+            )}
           </div>
         );
       }

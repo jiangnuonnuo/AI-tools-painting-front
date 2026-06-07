@@ -65,10 +65,34 @@ export interface DoneChunk {
     type: 'done';
 }
 
-export type StreamChunk = DrawioNodeChunk | DrawioEdgeChunk | DrawioDoneChunk | DrawioLegacyChunk | StatusChunk | ErrorChunk | UserChunk | DoneChunk;
+// PPT streaming chunks
+export interface PptSlideChunk {
+    type: 'ppt_slide';
+    slide: any;
+    title?: string;
+    slideIndex?: number;
+}
+
+export interface PptDoneChunk {
+    type: 'ppt_done';
+    title?: string;
+    totalSlides?: number;
+}
+
+export interface PptRawChunk {
+    type: 'ppt_raw';
+    raw: string;
+}
+
+export interface TokenChunk {
+    type: 'token';
+    content: string;
+}
+
+export type StreamChunk = DrawioNodeChunk | DrawioEdgeChunk | DrawioDoneChunk | DrawioLegacyChunk | StatusChunk | ErrorChunk | UserChunk | DoneChunk | PptSlideChunk | PptDoneChunk | PptRawChunk | TokenChunk;
 
 export interface StreamEvent {
-    phase: 'analyzing' | 'drawing' | 'reviewing' | 'thinking' | 'error' | 'done';
+    phase: 'analyzing' | 'drawing' | 'reviewing' | 'thinking' | 'error' | 'done' | 'generating';
     chunk: StreamChunk;
 }
 
@@ -187,10 +211,14 @@ export const agentApi = {
                         } catch {}
                     }
 
-                    onComplete();
+                    // Only call onComplete if we didn't abort
+                    if (!controller.signal.aborted) {
+                        onComplete();
+                    }
                 } catch (err: any) {
                     if (err.name === 'AbortError') {
-                        // User cancelled, no error
+                        // User cancelled, no error, but call complete to cleanup UI state
+                        onComplete();
                         return;
                     }
                     onError(err instanceof Error ? err : new Error(String(err)));

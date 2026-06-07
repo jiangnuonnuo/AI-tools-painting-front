@@ -10,11 +10,19 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 // Message type definition
+type MessageStep = {
+  phase: string;
+  label: string;
+  content: string;
+  status: 'running' | 'done' | 'pending';
+};
+
 type Message = {
   id: string;
   role: 'user' | 'agent';
   content: string;
   reasoning?: string;
+  steps?: MessageStep[];
   timestamp: number;
 };
 
@@ -476,6 +484,7 @@ export default function Home() {
       role: 'agent',
       content: '',
       reasoning: '',
+      steps: [],
       timestamp: Date.now()
     };
 
@@ -514,6 +523,29 @@ export default function Home() {
       
       let accumulatedReasoning = '';
       let accumulatedContent = '';
+      let accumulatedSteps: MessageStep[] = [];
+
+      // Helper to update steps
+      const updateStep = (phaseStr: string, phaseText: string, contentToAdd: string, isDone: boolean = false) => {
+          const stepIndex = accumulatedSteps.findIndex(s => s.phase === phaseStr);
+          if (stepIndex >= 0) {
+              if (contentToAdd) {
+                  accumulatedSteps[stepIndex].content += contentToAdd + '\n';
+              }
+              if (isDone) {
+                  accumulatedSteps[stepIndex].status = 'done';
+              }
+          } else {
+              // Mark previous running steps as done
+              accumulatedSteps.forEach(s => { if (s.status === 'running') s.status = 'done'; });
+              accumulatedSteps.push({
+                  phase: phaseStr,
+                  label: phaseText,
+                  content: contentToAdd ? contentToAdd + '\n' : '',
+                  status: isDone ? 'done' : 'running'
+              });
+          }
+      };
 
       // Clear the canvas before starting a new stream
       if (drawioRef.current && currentSessionId === currentSessionRef.current) {
@@ -542,8 +574,11 @@ export default function Home() {
             reviewing: '✅ 检查优化',
             thinking: '🤔 思考中',
           };
+          const currentPhaseLabel = phaseLabel[phase] || phaseLabel.thinking;
+
           if (phase !== 'done' && phase !== 'error') {
             setStreamPhase(phase);
+            updateStep(phase, currentPhaseLabel, '');
           }
 
           switch (chunk.type) {
@@ -551,32 +586,30 @@ export default function Home() {
               // If a previous agent (e.g. drawer) finished, and a new agent (e.g. reviewer) starts sending nodes,
               // we must reset the accumulators so we don't duplicate nodes.
               if (receivedDrawioDone) {
+                // Because reviewer sends a FULL list of corrected nodes and edges,
+                // we MUST clear the previous accumulated elements so they don't duplicate.
                 accumulatedNodes = [];
                 accumulatedEdges = [];
                 nodeCount = 0;
                 edgeCount = 0;
                 receivedDrawioDone = false;
-                // Also clear the canvas to prepare for the reviewer's updated layout
-                if (drawioRef.current && currentSessionId === currentSessionRef.current) {
-                  try {
-                    drawioRef.current.load({ xml: '' });
-                  } catch (e) {
-                    console.error('Failed to clear canvas for reviewer:', e);
-                  }
-                }
               }
 
               hasIncrementalContent = true;
               nodeCount++;
               setStreamProgress(`添加节点 #${nodeCount}: ${chunk.label}`);
 
-              accumulatedNodes.push(chunk.xml);
+              // Sometimes AI returns empty XML or malformed tags, skip adding to prevent crashing draw.io
+              if (chunk.xml && chunk.xml.trim() !== '') {
+                  accumulatedNodes.push(chunk.xml);
+              }
 
               // Incrementally load the accumulated cells into draw.io
               if (drawioRef.current && currentSessionId === currentSessionRef.current) {
                 try {
                   // Ensure nodes are placed before edges in the XML structure
                   const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedNodes.join('')}${accumulatedEdges.join('')}</root></mxGraphModel>`;
+                  // By avoiding full load and just pushing the xml state, react-drawio updates the iframe
                   drawioRef.current.load({ xml: loadXml });
                 } catch (e) {
                   console.error('Failed to load node:', e);
@@ -592,26 +625,22 @@ export default function Home() {
                 nodeCount = 0;
                 edgeCount = 0;
                 receivedDrawioDone = false;
-                if (drawioRef.current && currentSessionId === currentSessionRef.current) {
-                  try {
-                    drawioRef.current.load({ xml: '' });
-                  } catch (e) {
-                    console.error('Failed to clear canvas for reviewer:', e);
-                  }
-                }
               }
 
               hasIncrementalContent = true;
               edgeCount++;
               setStreamProgress(`添加连线 #${edgeCount}: ${chunk.label || chunk.source + '→' + chunk.target}`);
 
-              accumulatedEdges.push(chunk.xml);
+              if (chunk.xml && chunk.xml.trim() !== '') {
+                  accumulatedEdges.push(chunk.xml);
+              }
 
               // Incrementally load the accumulated cells into draw.io
               if (drawioRef.current && currentSessionId === currentSessionRef.current) {
                 try {
                   // Ensure nodes are placed before edges in the XML structure
                   const loadXml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${accumulatedNodes.join('')}${accumulatedEdges.join('')}</root></mxGraphModel>`;
+                  // By avoiding full load and just pushing the xml state, react-drawio updates the iframe
                   drawioRef.current.load({ xml: loadXml });
                 } catch (e) {
                   console.error('Failed to load edge:', e);
@@ -627,7 +656,7 @@ export default function Home() {
               setStreamProgress('🎨 绘制完成，正在加载最终图表...');
 
               // Final full load to ensure consistency
-              if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml) {
+              if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml && finalXml.trim() !== '') {
                 try {
                   drawioRef.current.load({ xml: finalXml });
                 } catch (e) {
@@ -646,6 +675,7 @@ export default function Home() {
                 }
                 return session;
               }));
+              
               break;
             }
 
@@ -655,7 +685,7 @@ export default function Home() {
               receivedDrawioDone = true;
               finalXml = chunk.content;
 
-              if (drawioRef.current && currentSessionId === currentSessionRef.current) {
+              if (drawioRef.current && currentSessionId === currentSessionRef.current && finalXml && finalXml.trim() !== '') {
                 try {
                   drawioRef.current.load({ xml: finalXml });
                 } catch (e) {
@@ -673,6 +703,7 @@ export default function Home() {
                 }
                 return session;
               }));
+              
               break;
             }
 
@@ -680,34 +711,76 @@ export default function Home() {
               // AI returns a text response (not a diagram)
               agentTextContent += chunk.content;
               accumulatedContent += chunk.content;
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
               break;
             }
 
             case 'status': {
               // Intermediate status message
-              if (chunk.content && chunk.content.trim() !== '}') {
-                 accumulatedReasoning += chunk.content;
-                 setStreamProgress(chunk.content.substring(0, 50) + '...');
-                 setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, reasoning: accumulatedReasoning } : m));
+              if (chunk.content) {
+                 const text = chunk.content.trim();
+                 // Filter out markdown code block syntax and raw JSON syntax from reasoning display
+                 if (text !== '}' && text !== '{' && text !== ']' && text !== '[' && 
+                     !text.startsWith('```') && 
+                     !text.startsWith('"type":') &&
+                     !text.startsWith('"id":') &&
+                     !text.startsWith('"xml":') &&
+                     !text.startsWith('<mxCell') &&
+                     !text.startsWith('<mxGraphModel') &&
+                     !text.includes('"drawio_node"') &&
+                     !text.includes('"drawio_edge"') &&
+                     !text.includes('"drawio_done"')) {
+                     
+                     accumulatedReasoning += chunk.content + '\n';
+                     updateStep(phase, currentPhaseLabel, chunk.content);
+                     setStreamProgress(text.substring(0, 50) + '...');
+                     setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, reasoning: accumulatedReasoning, steps: [...accumulatedSteps] } : m));
+                 }
+              }
+              break;
+            }
+
+            case 'token': {
+              // Real-time token output
+              if (chunk.content) {
+                  const text = chunk.content.trim();
+                  // We can accumulate tokens into the current step to show dynamic progress
+                  // To avoid huge XML rendering lag, we can filter out JSON syntax
+                  if (text !== '}' && text !== '{' && text !== ']' && text !== '[' && 
+                     !text.startsWith('```') && 
+                     !text.startsWith('"type":') &&
+                     !text.startsWith('"id":') &&
+                     !text.startsWith('"xml":') &&
+                     !text.startsWith('<mxCell') &&
+                     !text.startsWith('<mxGraphModel') &&
+                     !text.includes('"drawio_node"') &&
+                     !text.includes('"drawio_edge"') &&
+                     !text.includes('"drawio_done"')) {
+                     
+                      updateStep(phase, currentPhaseLabel, chunk.content);
+                      setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
+                  }
               }
               break;
             }
 
             case 'error': {
               accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ ${chunk.content}`;
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
               break;
             }
 
             case 'done': {
-              // Stream completed
+              // Stream completed explicitly by backend
+              accumulatedSteps.forEach(s => { s.status = 'done'; });
               if (nodeCount > 0 || receivedDrawioDone) {
                 accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ 图表绘制完成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`;
-                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
+                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
               } else if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
                 accumulatedContent += (accumulatedContent ? '\n\n' : '') + `⚠️ 未收到有效响应，请重试。`;
-                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
+                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
+              } else {
+                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
               }
               setStreamPhase('done');
               break;
@@ -717,8 +790,16 @@ export default function Home() {
         // onError
         (error: Error) => {
           console.error('Stream error:', error);
-          accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ 连接异常: ${error.message}`;
-          setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent } : m));
+          
+          // Only show error message if we didn't receive any content and it's not an AbortError
+          if (error.name !== 'AbortError' && !hasIncrementalContent && !agentTextContent && nodeCount === 0) {
+              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ 连接异常: ${error.message}`;
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: m.steps?.map(s => ({...s, status: 'done'})) } : m));
+          } else {
+              // If we already had content, just mark steps as done gracefully
+              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: m.steps?.map(s => ({...s, status: 'done'})) } : m));
+          }
+          
           setIsSending(false);
           setStreamPhase('');
           setStreamProgress('');
@@ -728,6 +809,32 @@ export default function Home() {
           setIsSending(false);
           setStreamPhase('');
           setStreamProgress('');
+          
+          // Fallback if drawio_done wasn't explicitly sent
+          if (!receivedDrawioDone && nodeCount > 0) {
+              setMessages(prev => prev.map(m => {
+                  if (m.id === agentMsgId) {
+                      const finalContent = (m.content ? m.content + '\n\n' : '') + `✅ 图表绘制完成！共 ${nodeCount} 个节点，${edgeCount} 条连线。`;
+                      return { ...m, content: finalContent, steps: m.steps?.map(s => ({...s, status: 'done'})) };
+                  }
+                  return m;
+              }));
+          } else if (!receivedDrawioDone && !agentTextContent && !hasIncrementalContent) {
+              setMessages(prev => prev.map(m => {
+                  if (m.id === agentMsgId) {
+                      const finalContent = (m.content ? m.content + '\n\n' : '') + `⚠️ 未收到有效响应，请重试。`;
+                      return { ...m, content: finalContent, steps: m.steps?.map(s => ({...s, status: 'done'})) };
+                  }
+                  return m;
+              }));
+          } else {
+              setMessages(prev => prev.map(m => {
+                  if (m.id === agentMsgId) {
+                      return { ...m, steps: m.steps?.map(s => ({...s, status: 'done'})) };
+                  }
+                  return m;
+              }));
+          }
         }
       );
 
@@ -752,6 +859,10 @@ export default function Home() {
     
     const content = inputValue;
     setInputValue('');
+    // Reset textarea height
+    const textarea = document.querySelector('textarea');
+    if (textarea) textarea.style.height = '50px';
+
     setIsSending(true);
 
     if (useHistoryContext && drawioRef.current && isDrawIoReady) {
@@ -800,7 +911,7 @@ export default function Home() {
   }, [lastExportedData]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
@@ -1042,18 +1153,42 @@ export default function Home() {
                       </span>
                       
                       <div className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                        {/* Reasoning Block */}
-                        {msg.role === 'agent' && msg.reasoning && (
-                          <details className="w-full max-w-full group/details open:pb-2">
-                            <summary className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700 font-medium select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm transition-all hover:border-slate-300">
-                               <Icons.Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                               <span className="group-open/details:hidden">展开思考过程</span>
-                               <span className="hidden group-open/details:inline">收起思考过程</span>
-                            </summary>
-                            <div className="mt-2 p-4 bg-white border border-slate-200 rounded-xl shadow-sm text-sm text-slate-600 prose prose-sm prose-slate max-w-none overflow-x-auto">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.reasoning}</ReactMarkdown>
-                            </div>
-                          </details>
+                        {/* Steps / Reasoning Block */}
+                        {msg.role === 'agent' && ((msg.steps && msg.steps.length > 0) || msg.reasoning) && (
+                          <div className="w-full max-w-full">
+                            <details className="w-full group/details open:pb-2" open={index === messages.length - 1 && isSending}>
+                              <summary className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700 font-medium select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm transition-all hover:border-slate-300">
+                                 <Icons.Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                                 <span className="group-open/details:hidden">展开执行步骤</span>
+                                 <span className="hidden group-open/details:inline">收起执行步骤</span>
+                              </summary>
+                              <div className="mt-2 flex flex-col gap-2 p-3 bg-slate-50/50 border border-slate-200 rounded-xl shadow-sm text-sm text-slate-600 max-w-none overflow-x-auto">
+                                 {msg.steps && msg.steps.length > 0 ? (
+                                   msg.steps.map((step, idx) => (
+                                     <div key={idx} className="flex flex-col gap-1.5 p-2 bg-white rounded-lg border border-slate-100 shadow-sm">
+                                         <div className="flex items-center gap-2 font-medium text-slate-700">
+                                             {step.status === 'running' ? (
+                                                <Icons.Loader className="w-3.5 h-3.5 text-indigo-500" />
+                                             ) : (
+                                                <span className="text-green-500">✓</span>
+                                             )}
+                                             <span>{step.label}</span>
+                                         </div>
+                                         {step.content && (
+                                             <div className="text-xs text-slate-500 pl-6 border-l-2 border-slate-100 ml-1.5 prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
+                                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                                           </div>
+                                         )}
+                                     </div>
+                                   ))
+                                 ) : (
+                                   <div className="p-2 bg-white rounded-lg border border-slate-100 shadow-sm prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
+                                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.reasoning || ''}</ReactMarkdown>
+                                   </div>
+                                 )}
+                              </div>
+                            </details>
+                          </div>
                         )}
 
                         {/* Content Block */}
@@ -1063,7 +1198,7 @@ export default function Home() {
                                 p-3.5 text-sm leading-relaxed shadow-sm whitespace-pre-wrap w-fit
                                 ${msg.role === 'user' 
                                 ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-indigo-200' 
-                                : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm shadow-sm prose prose-sm prose-slate max-w-none overflow-x-auto'
+                                : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm shadow-sm prose prose-sm prose-slate max-w-none overflow-x-auto prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700'
                                 }
                             `}
                           >
@@ -1102,7 +1237,6 @@ export default function Home() {
                       <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }}></span>
                       <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce" style={{ animationDelay: '300ms' }}></span>
                     </div>
-                    <span className="font-medium text-xs truncate max-w-[200px]">{streamProgress || '正在处理中...'}</span>
                   </div>
                 </div>
               </div>
@@ -1147,13 +1281,17 @@ export default function Home() {
                     <span>携带画布上下文</span>
                 </button>
                 <span className="text-[10px] text-slate-400 ml-auto hidden sm:inline-block">
-                    Press <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Ctrl/Command</kbd> + <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd>
+                    <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 发送, <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Shift</kbd> + <kbd className="font-sans px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">Enter</kbd> 换行
                 </span>
             </div>
             <div className="relative flex items-end gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50/50 focus-within:bg-white transition-all shadow-inner">
               <textarea
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                onChange={(e) => {
+                  setInputValue(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={isSending ? "AI 正在生成中..." : "输入您的问题，描述您的需求..."}
                 disabled={isSending}
