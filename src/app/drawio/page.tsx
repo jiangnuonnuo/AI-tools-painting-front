@@ -1081,7 +1081,7 @@ export default function Home() {
   return (
     <div className="flex flex-col h-screen w-full overflow-hidden bg-slate-50 text-slate-900 font-sans">
       {/* Header - Minimal & Clean */}
-      <div className="h-14 px-6 bg-white border-b border-slate-200 flex items-center justify-between shrink-0 z-40 relative">
+      <div className="h-14 px-6 bg-white border-b border-slate-100/60 flex items-center justify-between shrink-0 z-40 relative">
         <div className="flex items-center gap-3">
           <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm shadow-indigo-200">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1152,7 +1152,7 @@ export default function Home() {
       {/* Main Layout */}
       <div className="flex flex-1 w-full overflow-hidden relative">
         {/* Sessions Sidebar */}
-        <div className="w-64 bg-white text-slate-600 flex flex-col border-r border-slate-200 shrink-0 z-30">
+        <div className="w-64 bg-white text-slate-600 flex flex-col border-r border-slate-100/60 shrink-0 z-30">
           <div className="h-14 px-4 flex items-center justify-between border-b border-slate-100 shrink-0">
              <span className="font-semibold text-slate-800 flex items-center gap-2">
                 <Icons.MessageSquare className="w-4 h-4 text-indigo-600" />
@@ -1634,21 +1634,23 @@ export default function Home() {
       )}
       {/* Custom Models Settings Modal */}
       {showApiConfig && (
-        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20 flex flex-col max-h-[90vh]">
                 <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
-                    <div className="flex items-center gap-2">
-                      <Icons.Sparkles className="w-5 h-5 text-indigo-500" />
-                      <h2 className="text-lg font-bold text-slate-800">自定义模型配置</h2>
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 bg-indigo-50 rounded-lg">
+                        <Icons.Sparkles className="w-4 h-4 text-indigo-500" />
+                      </div>
+                      <h2 className="text-base font-bold text-slate-800">自定义模型配置</h2>
                     </div>
-                    <button 
+                    <button
                         onClick={() => {
                           setShowApiConfig(false);
                           setEditingModel(null);
                         }}
-                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                        className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
                     >
-                        <Icons.Close className="w-5 h-5" />
+                        <Icons.Close className="w-4 h-4" />
                     </button>
                 </div>
                 

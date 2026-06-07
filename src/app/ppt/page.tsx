@@ -1964,7 +1964,7 @@ ${content}`;
         return (
           <div
             key={idx}
-            className="absolute bg-gray-100 overflow-hidden"
+            className="absolute bg-slate-100 overflow-hidden"
             style={{
               left: `${xPct}%`,
               top: `${yPct}%`,
@@ -1981,7 +1981,7 @@ ${content}`;
             {el.content ? (
               <img src={el.content} alt="slide image" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
-              <Icons.FilePresentation className="w-8 h-8 text-gray-300" />
+              <Icons.FilePresentation className="w-8 h-8 text-slate-300" />
             )}
           </div>
         );
@@ -2234,7 +2234,14 @@ ${content}`;
   return (
     <div className="flex flex-col h-screen w-full overflow-hidden bg-slate-50 text-slate-900 font-sans">
       {/* ===== Header Bar ===== */}
-      <header className="h-12 bg-white border-b border-gray-200 flex items-center justify-between px-4 shrink-0 z-40 shadow-sm">
+      <header className="h-14 px-6 bg-white border-b border-slate-100/60 flex items-center justify-between shrink-0 z-40">
+        <div className="flex items-center gap-3">
+          <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm shadow-indigo-200">
+            <Icons.FilePresentation className="text-white w-5 h-5" />
+          </div>
+          <h1 className="text-lg font-bold text-slate-800 tracking-tight">AI PPT <span className="text-slate-400 font-normal text-sm ml-2">@小傅哥</span></h1>
+        </div>
+
         <div className="flex items-center gap-3">
           <button
             onClick={() => router.push('/')}
@@ -2253,30 +2260,23 @@ ${content}`;
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
             课程&源码
           </a>
-          <div className="h-5 w-px bg-gray-200"></div>
-          <div className="flex items-center gap-2">
-            <div className="bg-indigo-600 p-1 rounded-md">
-              <Icons.FilePresentation className="text-white w-4 h-4" />
-            </div>
-            <h1 className="text-base font-bold text-slate-800">
-              AI PPT <span className="text-gray-400 font-normal text-xs">@小傅哥</span>
-            </h1>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-50 rounded-full border border-gray-200">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-            <span className="text-xs text-gray-500">{currentUser || 'Guest'}</span>
+          <div className="h-6 w-px bg-slate-200 mx-1"></div>
+
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-full border border-slate-200 shadow-sm">
+             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
+             <span className="text-xs font-semibold text-slate-600">{currentUser || 'Guest'}</span>
           </div>
+
+          <div className="h-6 w-px bg-slate-200 mx-1"></div>
 
           <button
             onClick={handleDownloadPptx}
             disabled={!pptData}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm font-medium transition-all shadow-sm active:scale-95 ${
               pptData
-                ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                ? 'text-slate-600 hover:bg-slate-50 hover:border-slate-300'
+                : 'text-slate-400 cursor-not-allowed'
             }`}
           >
             <Icons.Download className="w-4 h-4" />
@@ -2286,7 +2286,7 @@ ${content}`;
           {pptData && (
             <button
               onClick={() => setIsFullscreen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-md text-sm font-medium transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300 rounded-lg text-sm font-medium transition-all shadow-sm active:scale-95"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
@@ -2300,15 +2300,15 @@ ${content}`;
 
           <button
             onClick={() => setIsStylePanelOpen(prev => !prev)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-              isStylePanelOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all shadow-sm active:scale-95 border ${
+              isStylePanelOpen ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
             }`}
             title="风格设置"
           >
             🎛️
           </button>
 
-          <button onClick={handleLogout} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="退出登录">
+          <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="退出登录">
             <Icons.Logout className="w-4 h-4" />
           </button>
 
@@ -2324,26 +2324,26 @@ ${content}`;
       <div className="flex flex-1 w-full overflow-hidden">
 
         {/* ===== Left: Slide Thumbnails / Template Library ===== */}
-        <aside className="w-[180px] bg-white border-r border-gray-200 flex flex-col shrink-0 z-30">
+        <aside className="w-[180px] bg-white border-r border-slate-100/60 flex flex-col shrink-0 z-30">
           {/* Tab Switcher: Templates / Slides */}
-          <div className="px-2 pt-2 pb-1 border-b border-gray-100 flex gap-1">
+          <div className="px-2 pt-2 pb-1 border-b border-slate-100 flex gap-1">
             <button
               onClick={() => setLeftTab('templates')}
-              className={`flex-1 text-[10px] font-medium py-1 rounded transition ${leftTab === 'templates' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}
+              className={`flex-1 text-[10px] font-medium py-1 rounded transition ${leftTab === 'templates' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}
             >
               📋 模板
             </button>
             <button
               onClick={() => setLeftTab('slides')}
-              className={`flex-1 text-[10px] font-medium py-1 rounded transition ${leftTab === 'slides' ? 'bg-indigo-50 text-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}
+              className={`flex-1 text-[10px] font-medium py-1 rounded transition ${leftTab === 'slides' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}
             >
               🖼️ 页面
             </button>
           </div>
 
           {/* Theme Selector (always visible) */}
-          <div className="px-3 pt-2 pb-2 border-b border-gray-100">
-            <div className="text-[10px] text-gray-400 font-medium mb-1.5">🎨 主题</div>
+          <div className="px-3 pt-2 pb-2 border-b border-slate-100">
+            <div className="text-[10px] text-slate-400 font-medium mb-1.5">🎨 主题</div>
             <div className="flex flex-wrap gap-1.5">
               {THEMES.map(t => (
                 <button
@@ -2352,7 +2352,7 @@ ${content}`;
                   className={`w-6 h-6 rounded-full border-2 transition-all flex items-center justify-center ${
                     selectedThemeId === t.id
                       ? 'border-indigo-500 scale-110 shadow-md'
-                      : 'border-gray-200 hover:border-gray-400 hover:scale-105'
+                      : 'border-slate-200 hover:border-slate-400 hover:scale-105'
                   }`}
                   title={t.name}
                 >
@@ -2368,7 +2368,7 @@ ${content}`;
           </div>
 
           {/* Content area */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-gray-200">
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-slate-200">
             {leftTab === 'templates' ? (
               /* Template Library */
               <div className="space-y-0.5">
@@ -2376,13 +2376,13 @@ ${content}`;
                   <div key={cat.category}>
                     <button
                       onClick={() => setExpandedCategory(expandedCategory === cat.category ? null : cat.category)}
-                      className="w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-md hover:bg-gray-50 transition text-left"
+                      className="w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-md hover:bg-slate-50 transition text-left"
                     >
                       <span className="text-xs">{cat.icon}</span>
-                      <span className="text-[11px] font-medium text-gray-600 flex-1">{cat.label}</span>
-                      <span className="text-[9px] text-gray-300">{cat.templates.length}</span>
+                      <span className="text-[11px] font-medium text-slate-600 flex-1">{cat.label}</span>
+                      <span className="text-[9px] text-slate-300">{cat.templates.length}</span>
                       <svg
-                        className={`w-3 h-3 text-gray-400 transition-transform ${expandedCategory === cat.category ? 'rotate-90' : ''}`}
+                        className={`w-3 h-3 text-slate-400 transition-transform ${expandedCategory === cat.category ? 'rotate-90' : ''}`}
                         fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -2400,8 +2400,8 @@ ${content}`;
                             }}
                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-indigo-50 hover:border-indigo-200 border border-transparent transition group"
                           >
-                            <div className="text-[11px] font-medium text-gray-700 group-hover:text-indigo-700">{tpl.name}</div>
-                            <div className="text-[9px] text-gray-400 mt-0.5 leading-tight">{tpl.desc}</div>
+                            <div className="text-[11px] font-medium text-slate-700 group-hover:text-indigo-700">{tpl.name}</div>
+                            <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">{tpl.desc}</div>
                           </button>
                         ))}
                       </div>
@@ -2417,10 +2417,10 @@ ${content}`;
                   className={`cursor-pointer rounded-md transition-all ${
                     currentSlideIndex === idx
                       ? 'ring-2 ring-indigo-500 ring-offset-2 shadow-md'
-                      : 'ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-sm'
+                      : 'ring-1 ring-slate-200 hover:ring-slate-300 hover:shadow-sm'
                   }`}
                 >
-                  <div className="text-[10px] text-gray-400 mb-1 pl-0.5 font-medium">{idx + 1}</div>
+                  <div className="text-[10px] text-slate-400 mb-1 pl-0.5 font-medium">{idx + 1}</div>
                   <div className="w-full aspect-[16/9] bg-white rounded overflow-hidden relative shadow-sm">
                     {renderMiniSlide(slide, idx)}
                   </div>
@@ -2428,19 +2428,19 @@ ${content}`;
               ))
             ) : (
               <div className="text-center py-8">
-                <Icons.FilePresentation className="w-8 h-8 mx-auto text-gray-200 mb-2" />
-                <p className="text-[11px] text-gray-400">暂无幻灯片</p>
-                <p className="text-[9px] text-gray-300 mt-1">在右侧输入需求或选择模板</p>
+                <Icons.FilePresentation className="w-8 h-8 mx-auto text-slate-200 mb-2" />
+                <p className="text-[11px] text-slate-400">暂无幻灯片</p>
+                <p className="text-[9px] text-slate-300 mt-1">在右侧输入需求或选择模板</p>
               </div>
             )
           }
           </div>
 
           {/* Session list */}
-          <div className="border-t border-gray-100">
+          <div className="border-t border-slate-100">
             <div className="h-9 px-3 flex items-center justify-between">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">历史</span>
-              <button onClick={handleNewChat} className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="新建">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">历史</span>
+              <button onClick={handleNewChat} className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition" title="新建">
                 <Icons.Plus className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -2452,13 +2452,13 @@ ${content}`;
                   className={`group flex items-center gap-1 px-2 py-1 rounded cursor-pointer transition ${
                     currentSessionId === session.id
                       ? 'bg-indigo-50 text-indigo-700'
-                      : 'hover:bg-gray-50 text-gray-500 hover:text-gray-700'
+                      : 'hover:bg-slate-50 text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   <span className="text-[11px] truncate flex-1">{session.title}</span>
                   <button
                     onClick={(e) => handleDeleteSession(e, session.id)}
-                    className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 text-gray-300 hover:text-red-500 transition"
+                    className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 text-slate-300 hover:text-red-500 transition"
                   >
                     <Icons.Trash className="w-3 h-3" />
                   </button>
@@ -2486,15 +2486,15 @@ ${content}`;
           >
             {!pptData || !pptData.slides[currentSlideIndex] ? (
               <div className="text-center">
-                <div className="w-24 h-24 mx-auto mb-6 bg-gray-100 rounded-2xl flex items-center justify-center">
-                  <Icons.FilePresentation className="w-12 h-12 text-gray-300" />
+                <div className="w-24 h-24 mx-auto mb-6 bg-slate-100 rounded-2xl flex items-center justify-center">
+                  <Icons.FilePresentation className="w-12 h-12 text-slate-300" />
                 </div>
-                <p className="text-base text-gray-500 mb-2 font-medium">AI 生成 PPT 后将在此预览</p>
-                <p className="text-sm text-gray-400">在右侧对话区描述你的需求</p>
+                <p className="text-base text-slate-500 mb-2 font-medium">AI 生成 PPT 后将在此预览</p>
+                <p className="text-sm text-slate-400">在右侧对话区描述你的需求</p>
               </div>
             ) : (
               <div
-                className="bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden relative"
+                className="bg-white rounded-lg shadow-xl border border-slate-200 overflow-hidden relative"
                 style={{
                   width: '100%',
                   maxWidth: '960px',
@@ -2512,30 +2512,30 @@ ${content}`;
 
           {/* Slide navigation bar */}
           {pptData && pptData.slides.length > 0 && (
-            <div className="h-11 px-4 bg-white border-t border-gray-200 flex items-center justify-center gap-4 shrink-0">
+            <div className="h-11 px-4 bg-white border-t border-slate-200 flex items-center justify-center gap-4 shrink-0">
               <button
                 onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
                 disabled={currentSlideIndex === 0}
-                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="15 18 9 12 15 6"></polyline>
                 </svg>
               </button>
-              <span className="text-sm text-gray-500 font-mono tabular-nums min-w-[60px] text-center">
+              <span className="text-sm text-slate-500 font-mono tabular-nums min-w-[60px] text-center">
                 {currentSlideIndex + 1} / {pptData.slides.length}
               </span>
               <button
                 onClick={() => setCurrentSlideIndex(Math.min(pptData.slides.length - 1, currentSlideIndex + 1))}
                 disabled={currentSlideIndex === pptData.slides.length - 1}
-                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="9 18 15 12 9 6"></polyline>
                 </svg>
               </button>
-              <div className="h-4 w-px bg-gray-200 mx-2"></div>
-              <span className="text-xs text-gray-400">← → 翻页</span>
+              <div className="h-4 w-px bg-slate-200 mx-2"></div>
+              <span className="text-xs text-slate-400">← → 翻页</span>
             </div>
           )}
         </main>
@@ -2548,23 +2548,23 @@ ${content}`;
               isStylePanelOpen ? 'w-[220px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'
             }`}
           >
-            <div className="h-12 px-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+            <div className="h-12 px-4 border-b border-slate-100 flex items-center justify-between shrink-0">
               <span className="text-sm font-bold text-slate-800">🎛️ 风格设置</span>
-              <button onClick={() => setIsStylePanelOpen(false)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition shrink-0">
+              <button onClick={() => setIsStylePanelOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition shrink-0">
                 <Icons.Close className="w-4 h-4" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-5 text-sm">
               {/* Style */}
               <div>
-                <div className="text-xs text-gray-400 font-medium mb-2">风格</div>
+                <div className="text-xs text-slate-400 font-medium mb-2">风格</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {STYLE_OPTIONS.map(opt => (
                     <button
                       key={opt.id}
                       onClick={() => setSelectedStyle(opt.id)}
                       className={`px-2 py-1.5 rounded-md text-xs transition ${
-                        selectedStyle === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                        selectedStyle === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
                       }`}
                     >
                       {opt.label}
@@ -2574,14 +2574,14 @@ ${content}`;
               </div>
               {/* Structure */}
               <div>
-                <div className="text-xs text-gray-400 font-medium mb-2">结构</div>
+                <div className="text-xs text-slate-400 font-medium mb-2">结构</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {STRUCTURE_OPTIONS.map(opt => (
                     <button
                       key={opt.id}
                       onClick={() => setSelectedStructure(opt.id)}
                       className={`px-2 py-1.5 rounded-md text-xs transition ${
-                        selectedStructure === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                        selectedStructure === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
                       }`}
                     >
                       {opt.label}
@@ -2591,14 +2591,14 @@ ${content}`;
               </div>
               {/* Tone */}
               <div>
-                <div className="text-xs text-gray-400 font-medium mb-2">色调</div>
+                <div className="text-xs text-slate-400 font-medium mb-2">色调</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {TONE_OPTIONS.map(opt => (
                     <button
                       key={opt.id}
                       onClick={() => setSelectedTone(opt.id)}
                       className={`px-2 py-1.5 rounded-md text-xs transition ${
-                        selectedTone === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                        selectedTone === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
                       }`}
                     >
                       {opt.label}
@@ -2608,14 +2608,14 @@ ${content}`;
               </div>
               {/* Scene */}
               <div>
-                <div className="text-xs text-gray-400 font-medium mb-2">场景</div>
+                <div className="text-xs text-slate-400 font-medium mb-2">场景</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {SCENE_OPTIONS.map(opt => (
                     <button
                       key={opt.id}
                       onClick={() => setSelectedScene(opt.id)}
                       className={`px-2 py-1.5 rounded-md text-xs transition ${
-                        selectedScene === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                        selectedScene === opt.id ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
                       }`}
                     >
                       {opt.label}
@@ -2625,7 +2625,7 @@ ${content}`;
               </div>
               {/* Layout Preference */}
               <div>
-                <div className="text-xs text-gray-400 font-medium mb-2">布局偏好</div>
+                <div className="text-xs text-slate-400 font-medium mb-2">布局偏好</div>
                 <div className="space-y-1">
                   {LAYOUT_OPTIONS.map(opt => (
                     <button
@@ -2641,11 +2641,11 @@ ${content}`;
                         }
                       }}
                       className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition flex items-center justify-between ${
-                        selectedLayouts.includes(opt.id) ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-gray-50 text-gray-600 border border-transparent hover:bg-gray-100'
+                        selectedLayouts.includes(opt.id) ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
                       }`}
                     >
                       <span>{opt.label}</span>
-                      <span className="text-[10px] text-gray-400">{opt.desc}</span>
+                      <span className="text-[10px] text-slate-400">{opt.desc}</span>
                     </button>
                   ))}
                 </div>
@@ -2932,21 +2932,23 @@ ${content}`;
       </div>
     </div>
       {showApiConfig && (
-        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20 flex flex-col max-h-[90vh]">
                 <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
-                    <div className="flex items-center gap-2">
-                      <Icons.Sparkles className="w-5 h-5 text-indigo-500" />
-                      <h2 className="text-lg font-bold text-slate-800">自定义模型配置</h2>
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 bg-indigo-50 rounded-lg">
+                        <Icons.Sparkles className="w-4 h-4 text-indigo-500" />
+                      </div>
+                      <h2 className="text-base font-bold text-slate-800">自定义模型配置</h2>
                     </div>
                     <button
                         onClick={() => {
                           setShowApiConfig(false);
                           setEditingModel(null);
                         }}
-                        className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                        className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
                     >
-                        <Icons.Close className="w-5 h-5" />
+                        <Icons.Close className="w-4 h-4" />
                     </button>
                 </div>
 
