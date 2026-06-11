@@ -1,29 +1,56 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { ArrowRight, Bot, CheckCircle2, Cookie, KeyRound, LogOut, Network, ShieldCheck, UserRound } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { setUserInfo, getUserInfo, clearUserInfo } from '@/utils/cookie';
+import { clearUserInfo, getUserInfo, setUserInfo } from '@/utils/cookie';
 
+const features = [
+  {
+    title: 'XML 渲染链路',
+    desc: 'AI 返回 drawio 类型后直接进入画布，不打断编辑流。',
+  },
+  {
+    title: '画布上下文',
+    desc: '需要时导出当前 XML，作为下一轮智能体输入。',
+  },
+  {
+    title: '会话记录',
+    desc: '本地保存聊天和画布状态，便于继续设计。',
+  },
+  {
+    title: '人工协作',
+    desc: 'AI 生成、人工调整、再携带上下文迭代。',
+  },
+];
+
+/**
+ * description: Provides demo authentication before entering the AI + draw.io workbench.
+ * params:
+ * - input: No component props.
+ * - output: Renders the login form and writes demo auth cookie after validation.
+ */
 export default function Login() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [msg, setMsg] = useState({ text: '', type: '' });
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState('');
+
+  const isLoggedIn = Boolean(currentUser);
 
   useEffect(() => {
     const userInfo = getUserInfo();
-    if (userInfo && userInfo.user) {
-      setIsLoggedIn(true);
-      setCurrentUser(userInfo.user);
-      // If already logged in, redirect to home
-      router.push('/');
+
+    if (!userInfo?.user) {
+      return;
     }
+
+    router.push('/');
   }, [router]);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = (event: React.FormEvent) => {
+    event.preventDefault();
     setMsg({ text: '', type: '' });
 
     if (!username || !password) {
@@ -37,7 +64,9 @@ export default function Login() {
     }
 
     setUserInfo(username);
-    setMsg({ text: '登录成功，正在跳转…', type: 'info' });
+    setCurrentUser(username);
+    setMsg({ text: '登录成功，正在跳转...', type: 'info' });
+
     setTimeout(() => {
       router.push('/');
     }, 500);
@@ -51,128 +80,149 @@ export default function Login() {
 
   const handleLogout = () => {
     clearUserInfo();
-    setIsLoggedIn(false);
     setCurrentUser('');
     setMsg({ text: '已退出登录，cookie 已清除。', type: 'info' });
   };
 
   return (
-    <div className="min-h-screen flex justify-center items-stretch p-7 theme-bg-gradient">
-      <div className="w-full max-w-[1120px] grid grid-cols-1 lg:grid-cols-[1.25fr_0.75fr] gap-[18px]">
-        {/* Hero Section */}
-        <section className="theme-card rounded-[18px] overflow-hidden relative flex flex-col gap-[18px] p-[28px_28px_22px_28px]">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-[14px] grid place-items-center bg-gradient-to-br from-[#62f6c7] to-[#5aa9ff] shadow-[0_10px_24px_rgba(0,0,0,0.4)] text-[rgba(7,10,18,0.92)] font-extrabold text-lg tracking-[0.5px]">
-              AI
-            </div>
-            <div className="flex flex-col gap-1">
-              <strong className="text-base leading-[1.1] tracking-[0.2px] text-[rgba(255,255,255,0.92)]">
-                AI 智能体工作台 By Ai Agent Scaffold - @小傅哥
-              </strong>
-              <span className="text-xs text-[rgba(255,255,255,0.56)]">更快搭建 · 更稳运行 · 更易运维</span>
-            </div>
-          </div>
-
-          <h1 className="mt-[6px] text-[30px] leading-[1.2] tracking-[0.2px] text-[rgba(255,255,255,0.92)] font-bold">
-            一个能“帮你把事做完”的智能体登录页
-          </h1>
-          <p className="m-0 text-[rgba(255,255,255,0.72)] leading-[1.7] max-w-[52ch] text-sm">
-            左侧展示智能体能力与效果图，右侧进行登录。当前为演示登录：
-            账号 <b>admin</b>，密码 <b>admin</b>。登录成功后会在浏览器保存 cookie。
-          </p>
-
-          <div className="grid grid-cols-2 gap-3 mt-[6px]">
-            {[
-              { title: '工具调用', desc: '支持 API / Shell / 文件等执行链路编排' },
-              { title: '记忆与上下文', desc: '可配置可审计，减少重复沟通成本' },
-              { title: '多模型路由', desc: '按场景选择最合适的模型与策略' },
-              { title: '可观测性', desc: '链路、成本、失败原因都能追踪' },
-            ].map((item, idx) => (
-              <div key={idx} className="border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] rounded-[14px] p-3 flex gap-[10px] items-start">
-                <div className="w-[10px] h-[10px] rounded-full mt-[5px] flex-shrink-0 bg-gradient-to-br from-[#62f6c7] to-[#5aa9ff] shadow-[0_0_0_4px_rgba(98,246,199,0.08)]"></div>
-                <div>
-                  <b className="block text-[13px] mb-[3px] text-[rgba(255,255,255,0.92)]">{item.title}</b>
-                  <span className="block text-xs text-[rgba(255,255,255,0.56)] leading-[1.5]">{item.desc}</span>
-                </div>
+    <main className="login-shell">
+      <div className="login-grid">
+        <section className="login-hero">
+          <div className="relative z-10 flex h-full flex-col">
+            <div className="flex items-center gap-4">
+              <div className="brand-mark">
+                <Network className="h-5 w-5" />
               </div>
-            ))}
-          </div>
+              <div>
+                <p className="panel-kicker">AI DRAWING WORKBENCH</p>
+                <h1 className="text-[22px] font-semibold text-[var(--workbench-text)]">
+                  AI + draw.io 集成工作台
+                </h1>
+              </div>
+            </div>
 
-          <div className="mt-[10px] rounded-[16px] overflow-hidden border border-[rgba(255,255,255,0.10)] bg-[rgba(0,0,0,0.24)] h-[340px] relative">
-             {/* Placeholder for Hero Image - mimicking the original svg placeholder */}
-             <div className="w-full h-full flex items-center justify-center text-[rgba(255,255,255,0.2)] text-sm">
-                AI 智能体效果图
-             </div>
+            <div className="mt-10 max-w-[620px]">
+              <p className="text-sm font-semibold uppercase tracking-[0.32em] text-[var(--workbench-accent)]">
+                Agent assisted diagramming
+              </p>
+              <h2 className="mt-4 text-[42px] font-semibold leading-[1.08] tracking-[-0.02em] text-[var(--workbench-text)]">
+                用 AI 生成结构图，
+                <br />
+                在 draw.io 中继续精修。
+              </h2>
+              <p className="mt-5 max-w-[54ch] text-sm leading-7 text-[var(--workbench-muted)]">
+                登录后进入桌面工作台：左侧管理绘图会话，中间保留完整 draw.io 编辑器，右侧与智能体协同生成或修改 XML。
+              </p>
+            </div>
+
+            <div className="mt-8 grid grid-cols-2 gap-3">
+              {features.map((feature) => (
+                <div className="feature-card" key={feature.title}>
+                  <div className="mb-3 flex items-center gap-2 text-[var(--workbench-accent)]">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <strong className="text-sm">{feature.title}</strong>
+                  </div>
+                  <p className="text-xs leading-6 text-[var(--workbench-muted-2)]">{feature.desc}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="login-visual">
+              <span className="login-edge login-edge-1" />
+              <span className="login-edge login-edge-2" />
+              <span className="login-edge login-edge-3" />
+              <span className="login-node login-node-1">Prompt</span>
+              <span className="login-node login-node-2">Agent JSON</span>
+              <span className="login-node login-node-3">draw.io XML</span>
+              <span className="login-node login-node-4">Manual refine</span>
+            </div>
           </div>
         </section>
 
-        {/* Login Form Section */}
-        <section className="p-[28px] flex flex-col justify-center gap-[14px]">
-          <div className="theme-card rounded-[16px] p-5">
-            <h2 className="m-0 mb-[6px] text-[18px] text-[rgba(255,255,255,0.92)] font-bold">登录</h2>
-            <p className="m-0 mb-4 text-[rgba(255,255,255,0.56)] text-xs leading-[1.5]">
-              演示账号：admin / admin（可在页面脚本中替换成真实鉴权接口）
+        <section className="login-card">
+          <div className="mb-8">
+            <div className="assistant-mark mb-5">
+              <Bot className="h-4 w-4" />
+            </div>
+            <p className="panel-kicker">Secure demo access</p>
+            <h2 className="mt-2 text-[28px] font-semibold text-[var(--workbench-text)]">登录工作台</h2>
+            <p className="mt-3 text-sm leading-6 text-[var(--workbench-muted)]">
+              演示账号：admin / admin。登录成功后会在浏览器保存 cookie。
             </p>
+          </div>
 
-            {!isLoggedIn ? (
-              <form onSubmit={handleLogin} autoComplete="on">
-                <div className="flex flex-col gap-2 mb-3">
-                  <label htmlFor="username" className="text-xs text-[rgba(255,255,255,0.72)] tracking-[0.2px]">账号</label>
-                  <input
-                    id="username"
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="请输入账号"
-                    autoComplete="username"
-                    className="w-full rounded-[12px] theme-input p-3 outline-none transition-all duration-180 text-sm"
-                  />
-                </div>
+          {!isLoggedIn ? (
+            <form className="space-y-4" onSubmit={handleLogin} autoComplete="on">
+              <div>
+                <label className="field-label flex items-center gap-2" htmlFor="username">
+                  <UserRound className="h-4 w-4" />
+                  账号
+                </label>
+                <input
+                  autoComplete="username"
+                  className="dark-input mt-2"
+                  id="username"
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="请输入账号"
+                  type="text"
+                  value={username}
+                />
+              </div>
 
-                <div className="flex flex-col gap-2 mb-3">
-                  <label htmlFor="password" className="text-xs text-[rgba(255,255,255,0.72)] tracking-[0.2px]">密码</label>
-                  <input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="请输入密码"
-                    autoComplete="current-password"
-                    className="w-full rounded-[12px] theme-input p-3 outline-none transition-all duration-180 text-sm"
-                  />
-                </div>
+              <div>
+                <label className="field-label flex items-center gap-2" htmlFor="password">
+                  <KeyRound className="h-4 w-4" />
+                  密码
+                </label>
+                <input
+                  autoComplete="current-password"
+                  className="dark-input mt-2"
+                  id="password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="请输入密码"
+                  type="password"
+                  value={password}
+                />
+              </div>
 
-                <div className="flex gap-[10px] items-center justify-between mt-[6px]">
-                  <button type="submit" className="theme-btn rounded-[12px] p-[11px_14px] font-bold cursor-pointer border-0 transition-transform active:translate-y-[1px] active:brightness-[0.98] text-sm">
-                    登录并保存 Cookie
-                  </button>
-                  <button type="button" onClick={handleFillDemo} className="theme-btn-secondary rounded-[12px] p-[11px_14px] font-semibold cursor-pointer transition-transform active:translate-y-[1px] active:brightness-[0.98] text-sm">
-                    填充演示账号
-                  </button>
+              <div className="grid grid-cols-[1fr_auto] gap-3 pt-2">
+                <button className="toolbar-button toolbar-button-primary min-h-[46px]" type="submit">
+                  登录并保存 Cookie
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+                <button className="toolbar-button min-h-[46px]" onClick={handleFillDemo} type="button">
+                  <Cookie className="h-4 w-4" />
+                  填充演示账号
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="rounded-2xl border border-[var(--workbench-border)] bg-white/[0.055] p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--workbench-text)]">
+                    <ShieldCheck className="h-4 w-4 text-[var(--workbench-accent)]" />
+                    已登录：{currentUser}
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--workbench-muted-2)]">欢迎回来</p>
                 </div>
-              </form>
-            ) : (
-              <div className="flex gap-[10px] items-center justify-between p-3 border border-dashed border-[rgba(255,255,255,0.18)] rounded-[12px] bg-[rgba(255,255,255,0.04)] mt-3">
-                <div>
-                  <strong className="block text-[13px] text-[rgba(255,255,255,0.92)]">已登录：{currentUser}</strong>
-                  <span className="block text-xs text-[rgba(255,255,255,0.56)] mt-[2px]">欢迎回来</span>
-                </div>
-                <button onClick={handleLogout} className="theme-btn-secondary rounded-[12px] p-[8px_12px] font-semibold cursor-pointer text-xs">
+                <button className="toolbar-button" onClick={handleLogout} type="button">
+                  <LogOut className="h-4 w-4" />
                   退出
                 </button>
               </div>
-            )}
-
-            <div className={`min-h-[18px] text-xs mt-2 ${msg.type === 'error' ? 'text-[#ff5a7a]' : 'text-[rgba(255,255,255,0.56)]'}`}>
-              {msg.text}
             </div>
+          )}
+
+          <div className={`mt-4 min-h-5 text-xs ${msg.type === 'error' ? 'text-[var(--workbench-danger)]' : 'text-[var(--workbench-muted-2)]'}`}>
+            {msg.text}
           </div>
 
-          <div className="mt-[14px] text-[rgba(255,255,255,0.35)] text-xs text-center">
-            © AI Agent Scaffold · Next.js 页面示例
+          <div className="mt-8 border-t border-[var(--workbench-border)] pt-5 text-xs leading-6 text-[var(--workbench-muted-2)]">
+            AI Agent Scaffold · Next.js · draw.io iframe render surface
           </div>
         </section>
       </div>
-    </div>
+    </main>
   );
 }
