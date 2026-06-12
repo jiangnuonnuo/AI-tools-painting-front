@@ -9,7 +9,7 @@ set -e
 ALIYUN_REGISTRY="registry.cn-hangzhou.aliyuncs.com"
 NAMESPACE="fuzhengwei"
 IMAGE_NAME="ai-draw-io-front"
-IMAGE_TAG="1.1"
+IMAGE_TAG="1.7"
 
 # 读取本地配置文件
 if [ -f ".local-config" ]; then

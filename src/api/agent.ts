@@ -3,7 +3,7 @@ import {
     Response, 
     AiAgentConfigResponseDTO, 
     CreateSessionResponseDTO, 
-    ChatRequestDTO, 
+    ChatRequestDTO,
     ChatResponseDTO 
 } from '@/types/api';
 
@@ -18,6 +18,85 @@ const handleResponse = async <T>(response: globalThis.Response): Promise<Respons
     }
     return data;
 };
+
+// Types for streaming drawio events
+export interface DrawioNodeChunk {
+    type: 'drawio_node';
+    id: string;
+    label: string;
+    xml: string;
+}
+
+export interface DrawioEdgeChunk {
+    type: 'drawio_edge';
+    id: string;
+    label: string;
+    source: string;
+    target: string;
+    xml: string;
+}
+
+export interface DrawioDoneChunk {
+    type: 'drawio_done';
+    content: string;
+}
+
+export interface DrawioLegacyChunk {
+    type: 'drawio';
+    content: string;
+}
+
+export interface StatusChunk {
+    type: 'status';
+    content: string;
+}
+
+export interface ErrorChunk {
+    type: 'error';
+    content: string;
+}
+
+export interface UserChunk {
+    type: 'user';
+    content: string;
+}
+
+export interface DoneChunk {
+    type: 'done';
+}
+
+// PPT streaming chunks
+export interface PptSlideChunk {
+    type: 'ppt_slide';
+    slide: any;
+    title?: string;
+    slideIndex?: number;
+}
+
+export interface PptDoneChunk {
+    type: 'ppt_done';
+    title?: string;
+    totalSlides?: number;
+}
+
+export interface PptRawChunk {
+    type: 'ppt_raw';
+    raw: string;
+}
+
+export interface TokenChunk {
+    type: 'token';
+    content: string;
+}
+
+export type StreamChunk = DrawioNodeChunk | DrawioEdgeChunk | DrawioDoneChunk | DrawioLegacyChunk | StatusChunk | ErrorChunk | UserChunk | DoneChunk | PptSlideChunk | PptDoneChunk | PptRawChunk | TokenChunk;
+
+export interface StreamEvent {
+    phase: 'analyzing' | 'drawing' | 'reviewing' | 'thinking' | 'error' | 'done' | 'generating';
+    chunk: StreamChunk;
+}
+
+export type StreamEventCallback = (event: StreamEvent) => void;
 
 export const agentApi = {
     /**
@@ -50,7 +129,7 @@ export const agentApi = {
     },
 
     /**
-     * Chat
+     * Chat (blocking)
      * Path: /api/v1/chat
      */
     chat: async (data: ChatRequestDTO): Promise<Response<ChatResponseDTO>> => {
@@ -62,5 +141,97 @@ export const agentApi = {
             body: JSON.stringify(data),
         });
         return handleResponse<ChatResponseDTO>(response);
+    },
+
+    /**
+     * Chat Stream (SSE-like streaming)
+     * Path: /api/v1/chat_stream
+     * Receives structured drawio events: nodes, edges, and final XML
+     * Uses ReadableStream to process server-sent events line by line
+     */
+    chatStream: async (
+        data: ChatRequestDTO,
+        onEvent: StreamEventCallback,
+        onError: (error: Error) => void,
+        onComplete: () => void
+    ): Promise<AbortController> => {
+        const controller = new AbortController();
+
+        try {
+            const response = await fetch(`${API_CONFIG.BASE_URL}/chat_stream`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                onError(new Error(`HTTP error! status: ${response.status}, message: ${errorText}`));
+                return controller;
+            }
+
+            const reader = response.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            const processStream = async () => {
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+
+                        // Process complete lines
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (!trimmed) continue;
+
+                            try {
+                                const event: StreamEvent = JSON.parse(trimmed);
+                                onEvent(event);
+                            } catch (parseErr) {
+                                // If JSON parse fails, treat as raw status text
+                                console.warn('Failed to parse stream event:', trimmed, parseErr);
+                            }
+                        }
+                    }
+
+                    // Process any remaining buffer
+                    if (buffer.trim()) {
+                        try {
+                            const event: StreamEvent = JSON.parse(buffer.trim());
+                            onEvent(event);
+                        } catch {}
+                    }
+
+                    // Only call onComplete if we didn't abort
+                    if (!controller.signal.aborted) {
+                        onComplete();
+                    }
+                } catch (err: any) {
+                    if (err.name === 'AbortError') {
+                        // User cancelled, no error, but call complete to cleanup UI state
+                        onComplete();
+                        return;
+                    }
+                    onError(err instanceof Error ? err : new Error(String(err)));
+                }
+            };
+
+            processStream();
+        } catch (err: any) {
+            if (err.name !== 'AbortError') {
+                onError(err instanceof Error ? err : new Error(String(err)));
+            }
+        }
+
+        return controller;
     }
 };

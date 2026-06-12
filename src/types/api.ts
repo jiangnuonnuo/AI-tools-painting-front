@@ -20,10 +20,14 @@ export interface CreateSessionResponseDTO {
 }
 
 export interface ChatRequestDTO {
-    agentId: string;
-    userId: string;
-    sessionId: string;
-    message: string;
+  agentId: string;
+  userId: string;
+  sessionId: string;
+  message: string;
+  customBaseUrl?: string;
+  customApiKey?: string;
+  customCompletionsPath?: string;
+  customModel?: string;
 }
 
 export interface ChatResponseDTO {
