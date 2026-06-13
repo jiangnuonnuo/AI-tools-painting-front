@@ -27,12 +27,16 @@ interface ChatSidebarProps {
   isChatOpen: boolean;
   useHistoryContext: boolean;
   quickActions: QuickAction[];
+  chatWidth?: number;
+  isResizing?: boolean;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   onAgentChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
   onInputChange: (value: string) => void;
   onSendMessage: () => void;
   onRestartSession: () => void;
   onToggleHistoryContext: () => void;
+  onStartResize?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onToggleThinking?: (messageId: string) => void;
   onCloseChat: () => void;
   onKeyDown: (event: React.KeyboardEvent) => void;
 }
@@ -60,17 +64,32 @@ export function ChatSidebar({
   isChatOpen,
   useHistoryContext,
   quickActions,
+  chatWidth,
+  isResizing,
   messagesEndRef,
   onAgentChange,
   onInputChange,
   onSendMessage,
   onRestartSession,
   onToggleHistoryContext,
+  onStartResize,
+  onToggleThinking,
   onCloseChat,
   onKeyDown,
 }: ChatSidebarProps) {
   return (
-    <aside className={`chat-panel ${isChatOpen ? 'chat-panel-open' : 'chat-panel-closed'}`}>
+    <aside
+      className={`chat-panel relative ${isChatOpen ? 'chat-panel-open' : 'chat-panel-closed'}`}
+      style={chatWidth && isChatOpen ? { width: `${chatWidth}px` } : undefined}
+    >
+      {isChatOpen && onStartResize && (
+        <button
+          aria-label="调整对话面板宽度"
+          className={`absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize ${isResizing ? 'bg-[var(--workbench-accent)]/40' : 'bg-transparent hover:bg-[var(--workbench-accent)]/20'}`}
+          onMouseDown={onStartResize}
+          type="button"
+        />
+      )}
       <div className="chat-heading">
         <div className="flex min-w-0 items-center gap-3">
           <div className="assistant-mark">
@@ -109,9 +128,42 @@ export function ChatSidebar({
               <div className={`message-meta ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
                 {message.role === 'user' ? 'You' : 'Agent'}
               </div>
-              <div className={`message-bubble ${message.role === 'user' ? 'message-bubble-user' : ''}`}>
-                {message.content}
-              </div>
+              {message.role === 'agent' && (message.steps?.length || message.reasoning) ? (
+                <div className="mb-2">
+                  <button
+                    className="thinking-toggle"
+                    onClick={() => onToggleThinking?.(message.id)}
+                    type="button"
+                  >
+                    <Loader2 className={`h-3.5 w-3.5 ${message.steps?.some(step => step.status === 'running') ? 'animate-spin' : ''}`} />
+                    <span>{message.thinkingOpen ? '收起思考过程' : `思考过程 · ${message.steps?.length || 0} 个阶段`}</span>
+                  </button>
+                  {message.thinkingOpen && (
+                    <div className="thinking-drawer">
+                      {message.steps?.length ? (
+                        message.steps.map((step, index) => (
+                          <details className="thinking-step" key={step.id || `${message.id}-${step.phase}-${index}`}>
+                            <summary className="thinking-step-summary">
+                              <span>{step.status === 'running' ? '进行中' : '完成'}</span>
+                              <strong>{step.label}</strong>
+                              <small>{step.summary || step.content.replace(/\s+/g, ' ').slice(0, 34)}</small>
+                              {step.event && <em>{step.event}</em>}
+                            </summary>
+                            {step.content && <pre>{step.content}</pre>}
+                          </details>
+                        ))
+                      ) : (
+                        <pre>{message.reasoning}</pre>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+              {message.content && (
+                <div className={`message-bubble ${message.role === 'user' ? 'message-bubble-user' : ''}`}>
+                  {message.content}
+                </div>
+              )}
             </div>
           </div>
         ))}

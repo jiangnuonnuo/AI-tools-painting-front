@@ -1,11 +1,12 @@
 'use client';
 
-import { Bot, Download, LogOut, MessageCircle, Network } from 'lucide-react';
+import { Bot, Download, Home, LogOut, MessageCircle, Network } from 'lucide-react';
 
 interface WorkbenchHeaderProps {
   currentUser: string;
   isChatOpen: boolean;
   onExport: () => void;
+  onHome: () => void;
   onLogout: () => void;
   onOpenChat: () => void;
 }
@@ -16,6 +17,7 @@ interface WorkbenchHeaderProps {
  * - currentUser: The current logged-in user name displayed in the status pill.
  * - isChatOpen: Whether the assistant sidebar is currently visible.
  * - onExport: Output callback that starts draw.io export.
+ * - onHome: Output callback that navigates back to the application hub.
  * - onLogout: Output callback that clears login and navigates away.
  * - onOpenChat: Output callback that reopens the assistant sidebar.
  */
@@ -23,6 +25,7 @@ export function WorkbenchHeader({
   currentUser,
   isChatOpen,
   onExport,
+  onHome,
   onLogout,
   onOpenChat,
 }: WorkbenchHeaderProps) {
@@ -37,8 +40,8 @@ export function WorkbenchHeader({
             <h1 className="truncate text-[17px] font-semibold tracking-[0.01em] text-[var(--workbench-text)]">
               AI + draw.io Workbench
             </h1>
-            <span className="rounded-full border border-[var(--workbench-border)] bg-white/[0.04] px-2 py-0.5 text-[11px] text-[var(--workbench-muted)]">
-              @小傅哥
+            <span className="xerina-script-badge">
+              xerina
             </span>
           </div>
           <p className="mt-0.5 text-[11px] text-[var(--workbench-muted-2)]">
@@ -48,6 +51,10 @@ export function WorkbenchHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        <button className="icon-button" onClick={onHome} title="Application Home" type="button">
+          <Home className="h-4 w-4" />
+        </button>
+
         <div className="status-pill">
           <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_16px_rgba(110,231,183,0.85)]" />
           <Bot className="h-4 w-4 text-[var(--workbench-accent)]" />
@@ -72,4 +79,3 @@ export function WorkbenchHeader({
     </header>
   );
 }
-

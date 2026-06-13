@@ -1,10 +1,15 @@
 import { API_CONFIG } from '@/config/api-config';
-import { 
-    Response, 
-    AiAgentConfigResponseDTO, 
-    CreateSessionResponseDTO, 
+import {
+    Response,
+    AiAgentConfigResponseDTO,
+    CreateSessionResponseDTO,
     ChatRequestDTO,
-    ChatResponseDTO 
+    ChatResponseDTO,
+    PptData,
+    PptSlide,
+    ResponseMetadata,
+    StreamEventType,
+    StreamPhase
 } from '@/types/api';
 
 const handleResponse = async <T>(response: globalThis.Response): Promise<Response<T>> => {
@@ -22,28 +27,42 @@ const handleResponse = async <T>(response: globalThis.Response): Promise<Respons
 // Types for streaming drawio events
 export interface DrawioNodeChunk {
     type: 'drawio_node';
-    id: string;
-    label: string;
-    xml: string;
+    id?: string;
+    label?: string;
+    xml?: string;
+    content?: {
+        id: string;
+        label: string;
+        xml: string;
+    };
 }
 
 export interface DrawioEdgeChunk {
     type: 'drawio_edge';
-    id: string;
-    label: string;
-    source: string;
-    target: string;
-    xml: string;
+    id?: string;
+    label?: string;
+    source?: string;
+    target?: string;
+    xml?: string;
+    content?: {
+        id: string;
+        label: string;
+        source: string;
+        target: string;
+        xml: string;
+    };
 }
 
 export interface DrawioDoneChunk {
     type: 'drawio_done';
     content: string;
+    metadata?: ResponseMetadata;
 }
 
 export interface DrawioLegacyChunk {
     type: 'drawio';
     content: string;
+    metadata?: ResponseMetadata;
 }
 
 export interface StatusChunk {
@@ -59,16 +78,24 @@ export interface ErrorChunk {
 export interface UserChunk {
     type: 'user';
     content: string;
+    metadata?: ResponseMetadata;
 }
 
 export interface DoneChunk {
     type: 'done';
 }
 
+export interface PptChunk {
+    type: 'ppt';
+    content: PptData;
+    metadata?: ResponseMetadata;
+}
+
 // PPT streaming chunks
 export interface PptSlideChunk {
     type: 'ppt_slide';
-    slide: any;
+    content?: PptSlide;
+    slide?: PptSlide;
     title?: string;
     slideIndex?: number;
 }
@@ -89,10 +116,27 @@ export interface TokenChunk {
     content: string;
 }
 
-export type StreamChunk = DrawioNodeChunk | DrawioEdgeChunk | DrawioDoneChunk | DrawioLegacyChunk | StatusChunk | ErrorChunk | UserChunk | DoneChunk | PptSlideChunk | PptDoneChunk | PptRawChunk | TokenChunk;
+export interface AnalysisChunk {
+    type: 'analysis';
+    content: unknown;
+    metadata?: ResponseMetadata;
+}
+
+export interface DraftChunk {
+    type: 'draft';
+    content: unknown;
+    metadata?: ResponseMetadata;
+}
+
+export type StreamChunk = DrawioNodeChunk | DrawioEdgeChunk | DrawioDoneChunk | DrawioLegacyChunk | StatusChunk | ErrorChunk | UserChunk | DoneChunk | PptChunk | PptSlideChunk | PptDoneChunk | PptRawChunk | TokenChunk | AnalysisChunk | DraftChunk;
 
 export interface StreamEvent {
-    phase: 'analyzing' | 'drawing' | 'reviewing' | 'thinking' | 'error' | 'done' | 'generating';
+    seq?: number;
+    phase: StreamPhase | 'thinking';
+    author?: string;
+    event?: StreamEventType;
+    renderable?: boolean;
+    final?: boolean;
     chunk: StreamChunk;
 }
 
@@ -215,8 +259,8 @@ export const agentApi = {
                     if (!controller.signal.aborted) {
                         onComplete();
                     }
-                } catch (err: any) {
-                    if (err.name === 'AbortError') {
+                } catch (err: unknown) {
+                    if (err instanceof DOMException && err.name === 'AbortError') {
                         // User cancelled, no error, but call complete to cleanup UI state
                         onComplete();
                         return;
@@ -226,8 +270,8 @@ export const agentApi = {
             };
 
             processStream();
-        } catch (err: any) {
-            if (err.name !== 'AbortError') {
+        } catch (err: unknown) {
+            if (!(err instanceof DOMException && err.name === 'AbortError')) {
                 onError(err instanceof Error ? err : new Error(String(err)));
             }
         }

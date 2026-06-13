@@ -3,17 +3,28 @@
 import { useRef, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getUserInfo, clearUserInfo } from '@/utils/cookie';
-import { agentApi, StatusChunk, UserChunk, ErrorChunk, PptRawChunk } from '@/api/agent';
-import { AiAgentConfigResponseDTO } from '@/types/api';
+import { agentApi } from '@/api/agent';
+import {
+  AiAgentConfigResponseDTO,
+  PptData,
+  PptSlide,
+  PptSlideElement,
+  ResponseMetadata,
+} from '@/types/api';
 import pptxgen from 'pptxgenjs';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 // Message type definition
 type MessageStep = {
+  id: string;
   phase: string;
   label: string;
+  summary: string;
   content: string;
+  author?: string;
+  event?: string;
+  open?: boolean;
   status: 'running' | 'done' | 'pending';
 };
 
@@ -23,52 +34,9 @@ type Message = {
   content: string;
   reasoning?: string;
   steps?: MessageStep[];
+  thinkingOpen?: boolean;
   timestamp: number;
 };
-
-// PPT Slide data structure from AI Agent
-interface PptSlideElement {
-  kind: 'text' | 'table' | 'shape' | 'image' | 'icon' | 'divider' | 'bullet';
-  content: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  fontSize?: number;
-  color?: string;
-  bold?: boolean;
-  fill?: string;
-  align?: 'left' | 'center' | 'right';
-  rows?: string[][];
-  // Icon support: emoji or icon name
-  icon?: string;
-  // Decorative element options
-  radius?: number;
-  shadow?: boolean;
-  opacity?: number;
-  gradient?: string;  // e.g. 'primary' → resolved to theme gradient
-  // Line/divider options
-  thickness?: number; // line thickness in inches (for divider)
-  // Bullet number
-  number?: number;
-  // Font family override
-  fontFace?: string;
-  // Line spacing
-  lineSpacing?: number;
-  // Letter spacing
-  letterSpacing?: number;
-}
-
-interface PptSlide {
-  slideIndex: number;
-  layout?: string;
-  elements: PptSlideElement[];
-}
-
-interface PptData {
-  title: string;
-  slides: PptSlide[];
-}
 
 // Icons
 const Icons = {
@@ -164,6 +132,7 @@ interface Session {
   title: string;
   messages: Message[];
   pptData: PptData | null;
+  metadata?: ResponseMetadata;
   lastModified: number;
 }
 
@@ -278,6 +247,8 @@ const THEMES: PptTheme[] = [
     contentHeaderHeight: 1.3,
   },
 ];
+
+const PPT_AGENT_ID = '300001';
 
 // Default theme (used as fallback)
 const DEFAULT_THEME = THEMES[0];
@@ -407,37 +378,118 @@ const getSafeContentArea = (layout: string, theme: PptTheme): { x: number; y: nu
 };
 
 // --- PPT Data Normalization (shared) ---
-const stripMdCodeBlock = (s: string): string => s.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+type JsonRecord = Record<string, unknown>;
 
-const normalizePptSlide = (slide: any): PptSlide => {
+const asRecord = (value: unknown): JsonRecord | null => {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as JsonRecord
+    : null;
+};
+
+const asString = (value: unknown, fallback = ''): string => {
+  return typeof value === 'string' ? value : fallback;
+};
+
+const asNumber = (value: unknown, fallback: number): number => {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+};
+
+const asBoolean = (value: unknown): boolean | undefined => {
+  return typeof value === 'boolean' ? value : undefined;
+};
+
+const normalizeRows = (value: unknown): string[][] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value
+    .filter((row): row is unknown[] => Array.isArray(row) && row.length > 0)
+    .map((row) => row.map((cell) => String(cell ?? '')));
+};
+
+const normalizePptElement = (value: unknown): PptSlideElement => {
+  const element = asRecord(value) || {};
   const metaKeys = new Set(['kind','x','y','w','h','fontSize','color','bold','fill','align','rows','type','layout','slideIndex','fontFace','italic','underline','icon','number','radius','shadow','opacity','gradient','thickness','lineSpacing','letterSpacing']);
+
+  let content = asString(element.content);
+  if (!content) {
+    content = asString(element.text)
+      || asString(element.value)
+      || asString(element.label)
+      || asString(element.body)
+      || asString(element.title)
+      || asString(element.message);
+  }
+
+  if (!content) {
+    for (const [key, candidate] of Object.entries(element)) {
+      if (!metaKeys.has(key) && typeof candidate === 'string' && candidate.length > 0) {
+        content = candidate;
+        break;
+      }
+    }
+  }
+
+  const rows = normalizeRows(element.rows);
+  const icon = asString(element.icon);
+  let kind = asString(element.kind) as PptSlideElement['kind'];
+
+  if (!kind) {
+    if (rows) {
+      kind = 'table';
+    } else if (icon && !content) {
+      kind = 'icon';
+    } else if (content && content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(content)) {
+      kind = 'image';
+    } else if (content) {
+      kind = 'text';
+    } else if (element.fill) {
+      kind = 'shape';
+    } else {
+      kind = 'text';
+    }
+  }
+
+  if (kind === 'icon' && !content && icon) {
+    content = icon;
+  }
+
   return {
-    ...slide,
-    elements: (slide.elements || []).map((el: any) => {
-      // Normalize content field
-      if (el.content === undefined || el.content === null || el.content === '') {
-        el.content = el.text || el.value || el.label || el.body || el.title || el.message || '';
-        if (!el.content) {
-          for (const key of Object.keys(el)) {
-            if (!metaKeys.has(key) && typeof el[key] === 'string' && el[key].length > 0) {
-              el.content = el[key];
-              break;
-            }
-          }
-        }
-      }
-      // Normalize kind
-      if (!el.kind) {
-        if (el.rows && Array.isArray(el.rows)) el.kind = 'table';
-        else if (el.icon && !el.content) el.kind = 'icon';
-        else if (el.content && el.content.startsWith('http') && /\.(png|jpg|jpeg|gif|svg|webp)/i.test(el.content)) el.kind = 'image';
-        else if (el.content) el.kind = 'text';
-        else if (el.fill) el.kind = 'shape';
-        else el.kind = 'text';
-      }
-      if (el.kind === 'icon' && !el.content && el.icon) el.content = el.icon;
-      return el;
-    }),
+    kind,
+    content,
+    x: asNumber(element.x, 0),
+    y: asNumber(element.y, 0),
+    w: asNumber(element.w, 4),
+    h: asNumber(element.h, 1),
+    fontSize: asNumber(element.fontSize, 0) || undefined,
+    color: asString(element.color) || undefined,
+    bold: asBoolean(element.bold),
+    fill: asString(element.fill) || undefined,
+    align: element.align === 'center' || element.align === 'right' ? element.align : 'left',
+    rows,
+    icon: icon || undefined,
+    radius: asNumber(element.radius, 0) || undefined,
+    shadow: asBoolean(element.shadow),
+    opacity: asNumber(element.opacity, 0) || undefined,
+    gradient: asString(element.gradient) || undefined,
+    thickness: asNumber(element.thickness, 0) || undefined,
+    number: asNumber(element.number, 0) || undefined,
+    fontFace: asString(element.fontFace) || undefined,
+    lineSpacing: asNumber(element.lineSpacing, 0) || undefined,
+    letterSpacing: asNumber(element.letterSpacing, 0) || undefined,
+  };
+};
+
+const normalizePptSlide = (slide: unknown): PptSlide => {
+  const slideRecord = asRecord(slide) || {};
+
+  return {
+    slideIndex: asNumber(slideRecord.slideIndex, 0),
+    layout: asString(slideRecord.layout) || undefined,
+    elements: Array.isArray(slideRecord.elements)
+      ? slideRecord.elements.map(normalizePptElement)
+      : [],
   };
 };
 
@@ -448,98 +500,77 @@ const normalizePptData = (data: PptData): PptData => {
   };
 };
 
-const tryParsePpt = (raw: unknown): PptData | null => {
+const stringifyStreamContent = (content: unknown): string => {
+  if (content === undefined || content === null) {
+    return '';
+  }
+
+  if (typeof content === 'string') {
+    return content;
+  }
+
   try {
-    let parsedObj: any = null;
-    if (typeof raw === 'string') {
-      let clean = stripMdCodeBlock(raw);
-      if (clean.match(/\}\s*\{/)) {
-        try {
-          const arr = JSON.parse(`[${clean.replace(/\}\s*\{/g, '},{')}]`);
-          parsedObj = arr.find((item: any) => item.type === 'ppt' || (item.slides && item.title)) || arr[arr.length - 1];
-        } catch(e) {}
-      }
-      if (!parsedObj) {
-        parsedObj = JSON.parse(clean);
-      }
-    } else {
-      parsedObj = raw;
-    }
-    const findPptData = (obj: any, depth: number = 0): PptData | null => {
-      if (obj === null || obj === undefined || depth > 8) return null;
-      if (obj.title && Array.isArray(obj.slides)) return obj as PptData;
-      if (Array.isArray(obj.slides) && obj.slides.length > 0) return obj as PptData;
-      const keys = ['content', 'data', 'result', 'output', 'response', 'body'];
-      for (const key of keys) {
-        if (obj[key] !== undefined && obj[key] !== null) {
-          const inner = typeof obj[key] === 'string' ? (() => { try { return JSON.parse(stripMdCodeBlock(obj[key])); } catch { return null; } })() : obj[key];
-          if (inner) {
-            const found = findPptData(inner, depth + 1);
-            if (found) return found;
-          }
-        }
-      }
-      return null;
-    };
-    return findPptData(parsedObj);
-  } catch { return null; }
+    return JSON.stringify(content, null, 2);
+  } catch {
+    return String(content);
+  }
 };
 
-/**
- * Try to extract completed slides from a partially accumulated JSON string.
- * Uses a bracket-matching approach to find the deepest complete JSON prefix.
- */
-const tryExtractPartialSlides = (accumulated: string): PptSlide[] | null => {
-  try {
-    const clean = stripMdCodeBlock(accumulated);
-    // First, try direct full parse
-    try {
-      const fullParsed = JSON.parse(clean);
-      const pptData = tryParsePpt(fullParsed);
-      if (pptData && pptData.slides && pptData.slides.length > 0) {
-        return pptData.slides;
-      }
-    } catch {}
+const getChunkText = (chunk: { content?: unknown; raw?: string; metadata?: ResponseMetadata }): string => {
+  if (typeof chunk.raw === 'string') {
+    return chunk.raw;
+  }
 
-    // Partial parse: find the "slides" array and extract complete entries
-    const slidesStart = clean.indexOf('"slides"');
-    if (slidesStart < 0) return null;
+  return stringifyStreamContent(chunk.content);
+};
 
-    // Find the opening bracket of the slides array
-    const arrayStart = clean.indexOf('[', slidesStart);
-    if (arrayStart < 0) return null;
+const normalizeInlineText = (value: string): string => {
+  return value.replace(/```json|```/g, '').replace(/\s+/g, ' ').trim();
+};
 
-    // Scan for complete slide objects (each starts with { and has "slideIndex")
-    const completeSlides: PptSlide[] = [];
-    let searchFrom = arrayStart + 1;
-    let depth = 0;
-    let slideStart = -1;
+const createThinkingSummary = (
+  chunk: { type?: string; content?: unknown; raw?: string; metadata?: ResponseMetadata; label?: string },
+  fallback: string,
+): string => {
+  if (typeof chunk.metadata?.summary === 'string' && chunk.metadata.summary) {
+    return normalizeInlineText(chunk.metadata.summary).slice(0, 34);
+  }
 
-    for (let i = arrayStart + 1; i < clean.length; i++) {
-      const ch = clean[i];
-      if (ch === '{') {
-        if (depth === 0) slideStart = i;
-        depth++;
-      } else if (ch === '}') {
-        depth--;
-        if (depth === 0 && slideStart >= 0) {
-          // We have a complete top-level object
-          const objStr = clean.substring(slideStart, i + 1);
-          try {
-            const slideObj = JSON.parse(objStr);
-            if (slideObj && (slideObj.slideIndex !== undefined || slideObj.elements)) {
-              completeSlides.push(slideObj);
-            }
-          } catch {}
-          slideStart = -1;
-        }
+  if (typeof chunk.metadata?.backendContent === 'string' && chunk.metadata.backendContent) {
+    return normalizeInlineText(chunk.metadata.backendContent).slice(0, 34);
+  }
+
+  if (typeof chunk.label === 'string' && chunk.label) {
+    return normalizeInlineText(chunk.label).slice(0, 34);
+  }
+
+  if (chunk.content && typeof chunk.content === 'object' && !Array.isArray(chunk.content)) {
+    const record = chunk.content as Record<string, unknown>;
+    const keys = ['theme', 'purpose', 'title', 'summary', 'structure', 'label', 'message'];
+
+    for (const key of keys) {
+      if (typeof record[key] === 'string' && record[key]) {
+        return normalizeInlineText(record[key]).slice(0, 34);
       }
     }
-
-    return completeSlides.length > 0 ? completeSlides : null;
-  } catch {
-    return null;
   }
+
+  const text = normalizeInlineText(getChunkText(chunk));
+  return (text || fallback).slice(0, 34);
+};
+
+const formatProcessChunkText = (chunk: { type?: string; content?: unknown; raw?: string; metadata?: ResponseMetadata }): string => {
+  const text = getChunkText(chunk);
+
+  if (!text) {
+    return '';
+  }
+
+  if (chunk.type === 'analysis' || chunk.type === 'draft') {
+    return `\`\`\`json\n${text}\n\`\`\``;
+  }
+
+  return text;
 };
 
 const generatePptx = (data: PptData, theme: PptTheme) => {
@@ -556,29 +587,27 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
     // === STEP 1: Layout-specific theme decoration ===
     // Helper: add rectangle shape (with optional gradient)
     const addRect = (x: number, y: number, w: number, h: number, color: string, gradient?: { from: string; to: string }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (gradient) {
-        slide.addShape((pres as any).shapes.RECTANGLE, {
+        slide.addShape(pres.ShapeType.rect, {
           x, y, w, h,
           fill: { color: gradient.from },
           line: { width: 0 },
         });
         // Overlay with semi-transparent gradient effect using second shape
-        slide.addShape((pres as any).shapes.RECTANGLE, {
+        slide.addShape(pres.ShapeType.rect, {
           x, y, w, h,
           fill: { color: gradient.to, transparency: 50 },
           line: { width: 0 },
         });
       } else {
-        slide.addShape((pres as any).shapes.RECTANGLE, {
+        slide.addShape(pres.ShapeType.rect, {
           x, y, w, h, fill: { color }, line: { width: 0 },
         });
       }
     };
     // Helper: add circle shape
     const addCircle = (x: number, y: number, w: number, h: number, color: string, transparency = 0) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      slide.addShape((pres as any).shapes.OVAL, {
+      slide.addShape(pres.ShapeType.ellipse, {
         x, y, w, h, fill: { color, transparency }, line: { width: 0 },
       });
     };
@@ -722,12 +751,12 @@ const generatePptx = (data: PptData, theme: PptTheme) => {
             const tblX = Math.max(safe.x, el.x || 0);
             const tblY = Math.max(safe.y, el.y || 0);
             const safeRows = Array.isArray(el.rows)
-              ? el.rows.filter((r: any) => Array.isArray(r) && r.length > 0)
+              ? el.rows.filter((row): row is string[] => Array.isArray(row) && row.length > 0)
               : [];
             if (safeRows.length > 0 && (el.w || 0) > 0) {
               const colCount = safeRows[0].length || 1;
-              const tableRows = safeRows.map((row: any, rowIdx: number) =>
-                row.map((cell: any) => ({
+              const tableRows = safeRows.map((row, rowIdx) =>
+                row.map((cell) => ({
                   text: String(cell ?? ''),
                   options: {
                     fontSize: 12,
@@ -848,7 +877,11 @@ export default function PptPage() {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [chatWidth, setChatWidth] = useState(420);
+  const [isResizingChat, setIsResizingChat] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatResizeStartXRef = useRef(0);
+  const chatResizeStartWidthRef = useRef(420);
 
   // Stream State
   const [streamPhase, setStreamPhase] = useState<string>('');
@@ -862,6 +895,7 @@ export default function PptPage() {
 
   // PPT Preview State
   const [pptData, setPptData] = useState<PptData | null>(null);
+  const [responseMetadata, setResponseMetadata] = useState<ResponseMetadata | undefined>();
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedThemeId, setSelectedThemeId] = useState('navy');
@@ -991,6 +1025,35 @@ export default function PptPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    if (!isResizingChat) {
+      return;
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const nextWidth = chatResizeStartWidthRef.current + chatResizeStartXRef.current - event.clientX;
+      setChatWidth(Math.min(720, Math.max(340, nextWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingChat(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingChat]);
+
   // Check Login & Load Agents
   useEffect(() => {
     const userInfo = getUserInfo();
@@ -1016,18 +1079,7 @@ export default function PptPage() {
       try {
         const res = await agentApi.queryAiAgentConfigList();
         setAgents(res.data || []);
-        if (res.data && res.data.length > 0) {
-          // Prefer PPT agent if available, otherwise first
-          const pptAgent = res.data.find((a) => a.agentName?.includes('PPT') || a.agentDesc?.includes('PPT'));
-          const lastAgentId = localStorage.getItem('ai_ppt_last_agent');
-          if (lastAgentId && res.data.find((a) => a.agentId === lastAgentId)) {
-            setSelectedAgentId(lastAgentId);
-          } else if (pptAgent) {
-            setSelectedAgentId(pptAgent.agentId);
-          } else {
-            setSelectedAgentId(res.data[0].agentId);
-          }
-        }
+        setSelectedAgentId(PPT_AGENT_ID);
       } catch (error) {
         console.error('Failed to load agents:', error);
       }
@@ -1049,6 +1101,7 @@ export default function PptPage() {
           if (mostRecent.pptData) {
             setPptData(mostRecent.pptData);
           }
+          setResponseMetadata(mostRecent.metadata);
         } else {
           createNewSession(true);
         }
@@ -1103,6 +1156,7 @@ export default function PptPage() {
         },
       ],
       pptData: null,
+      metadata: undefined,
       lastModified: Date.now(),
     };
 
@@ -1111,6 +1165,7 @@ export default function PptPage() {
     setMessages(newSession.messages);
     setSessionId(backendId);
     setPptData(null);
+    setResponseMetadata(undefined);
     setCurrentSlideIndex(0);
   };
 
@@ -1122,6 +1177,7 @@ export default function PptPage() {
       setMessages(session.messages);
       setSessionId(session.backendSessionId || '');
       setPptData(session.pptData);
+      setResponseMetadata(session.metadata);
       setCurrentSlideIndex(0);
     }
   };
@@ -1186,11 +1242,26 @@ export default function PptPage() {
     router.push('/login');
   };
 
-  const handleAgentChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newAgentId = e.target.value;
+  const handleAgentChange = () => {
+    const newAgentId = PPT_AGENT_ID;
     setSelectedAgentId(newAgentId);
     setSessionId('');
-    localStorage.setItem('ai_ppt_last_agent', newAgentId);
+  };
+
+  const handleToggleThinking = (messageId: string) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === messageId
+          ? { ...message, thinkingOpen: !message.thinkingOpen }
+          : message
+      )
+    );
+  };
+
+  const handleStartChatResize = (event: React.MouseEvent<HTMLButtonElement>) => {
+    chatResizeStartXRef.current = event.clientX;
+    chatResizeStartWidthRef.current = chatWidth;
+    setIsResizingChat(true);
   };
 
   const handleStopStream = () => {
@@ -1286,38 +1357,151 @@ ${content}`;
         return session;
       }));
 
-      // --- Streaming PPT generation ---
-      let accumulatedText = '';
-      let streamPhaseStr: string = 'analyzing';
       let renderedSlideCount = 0;
-      let pptTitle = '';
       const currentSessionIdRef = currentSessionId;
-      
-      let accumulatedReasoning = '';
+      let workingPpt: PptData = { title: 'PPT', slides: [] };
       let accumulatedContent = '';
-      let accumulatedSteps: MessageStep[] = [];
+      const accumulatedSteps: MessageStep[] = [];
+      let stepSeq = 0;
+      let activeStepKey = '';
 
       setStreamPhase('analyzing');
       setStreamProgress('正在分析需求...');
       
-      const updateStep = (phaseStr: string, phaseText: string, contentToAdd: string, isDone: boolean = false) => {
-          const stepIndex = accumulatedSteps.findIndex(s => s.phase === phaseStr);
-          if (stepIndex >= 0) {
-              if (contentToAdd) {
-                  accumulatedSteps[stepIndex].content += contentToAdd + '\n';
-              }
-              if (isDone) {
-                  accumulatedSteps[stepIndex].status = 'done';
-              }
-          } else {
-              accumulatedSteps.forEach(s => { if (s.status === 'running') s.status = 'done'; });
-              accumulatedSteps.push({
-                  phase: phaseStr,
-                  label: phaseText,
-                  content: contentToAdd ? contentToAdd + '\n' : '',
-                  status: isDone ? 'done' : 'running'
-              });
+      const phaseLabel: Record<string, string> = {
+        analyzing: '分析需求',
+        drawing: '绘制内容',
+        generating: '生成内容',
+        reviewing: '检查优化',
+        thinking: '思考中',
+        done: '完成',
+        error: '异常',
+      };
+
+      const updateAgentMessage = () => {
+        setMessages(prev => prev.map(m => m.id === agentMsgId ? {
+          ...m,
+          content: accumulatedContent,
+          steps: [...accumulatedSteps],
+          thinkingOpen: m.thinkingOpen ?? false,
+        } : m));
+      };
+
+      const updateSessionPpt = (nextPpt: PptData, metadata?: ResponseMetadata) => {
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === currentSessionIdRef
+              ? {
+                  ...session,
+                  pptData: nextPpt,
+                  metadata,
+                  lastModified: Date.now(),
+                }
+              : session
+          )
+        );
+      };
+
+      const getStepGroupKey = (phaseStr: string, eventName?: string) => {
+          if (eventName === 'error' || eventName === 'message') {
+              return `${phaseStr}:${eventName}`;
           }
+
+          if (eventName?.startsWith('render_')) {
+              return `${phaseStr}:render`;
+          }
+
+          if (eventName?.startsWith('process_')) {
+              return `${phaseStr}:process`;
+          }
+
+          return phaseStr || eventName || 'thinking';
+      };
+
+      const mergeStepContent = (current: string, next: string, eventName?: string) => {
+          if (!current) {
+              return next;
+          }
+
+          const shouldAppendInline =
+              eventName === 'process_delta' &&
+              next.length <= 80 &&
+              !next.includes('\n') &&
+              !next.includes('```') &&
+              !current.endsWith('```');
+
+          return `${current}${shouldAppendInline ? '' : '\n\n'}${next}`;
+      };
+
+      const upsertStep = (
+        phaseStr: string,
+        phaseText: string,
+        content: string,
+        status: MessageStep['status'] = 'running',
+        author?: string,
+        eventName?: string,
+        summary?: string,
+      ) => {
+          const stepKey = getStepGroupKey(phaseStr, eventName);
+          const activeStep = accumulatedSteps[accumulatedSteps.length - 1];
+
+          if (activeStep && activeStepKey === stepKey) {
+              activeStep.content = mergeStepContent(activeStep.content, content, eventName);
+              activeStep.event = eventName;
+              activeStep.status = status;
+              if (summary && (!activeStep.summary || activeStep.summary === phaseText)) {
+                  activeStep.summary = summary;
+              }
+              return;
+          }
+
+          accumulatedSteps.forEach(s => { if (s.status === 'running') s.status = 'done'; });
+          activeStepKey = stepKey;
+
+          const cleanContent = normalizeInlineText(content);
+          accumulatedSteps.push({
+              id: `${Date.now()}-${stepSeq}`,
+              phase: stepKey,
+              label: author ? `${phaseText} · ${author}` : phaseText,
+              summary: summary || cleanContent.slice(0, 34) || phaseText,
+              author,
+              event: eventName,
+              content,
+              status,
+              open: false,
+          });
+          stepSeq += 1;
+      };
+
+      const inferEventName = (chunkType: string) => {
+        if (chunkType === 'ppt') return 'render_result';
+        if (chunkType === 'ppt_slide') return 'render_delta';
+        if (chunkType === 'user') return 'message';
+        if (chunkType === 'error') return 'error';
+        if (chunkType === 'done' || chunkType === 'ppt_done') return 'done';
+        return 'process_delta';
+      };
+
+      const upsertSlide = (slideContent: unknown) => {
+        const normalizedSlide = normalizePptSlide(slideContent);
+        const slideIndex = normalizedSlide.slideIndex || workingPpt.slides.length + 1;
+        const nextSlide = { ...normalizedSlide, slideIndex };
+        const nextSlides = [...workingPpt.slides];
+        const existingIndex = nextSlides.findIndex(slide => slide.slideIndex === slideIndex);
+
+        if (existingIndex >= 0) {
+          nextSlides[existingIndex] = nextSlide;
+        } else {
+          nextSlides.push(nextSlide);
+        }
+
+        nextSlides.sort((a, b) => a.slideIndex - b.slideIndex);
+        workingPpt = { ...workingPpt, slides: nextSlides };
+        renderedSlideCount = nextSlides.length;
+        setPptData(workingPpt);
+        setLeftTab('slides');
+        setStreamProgress(`已渲染 ${renderedSlideCount} 页`);
+        updateSessionPpt(workingPpt, responseMetadata);
       };
 
       const activeModelConfig = customModels.find(m => m.id === selectedCustomModelId && m.enabled);
@@ -1333,106 +1517,143 @@ ${content}`;
           customCompletionsPath: activeModelConfig?.completionsPath || undefined,
           customModel: activeModelConfig?.model || undefined
         },
-        (event) => {
-          const { phase, chunk } = event;
-
-          const phaseLabel: Record<string, string> = {
-            analyzing: '🔍 分析需求',
-            drawing: '🎨 生成内容',
-            generating: '🎨 生成内容',
-            reviewing: '✅ 检查优化',
-            thinking: '🤔 思考中',
+        (streamEvent) => {
+          const { phase, chunk } = streamEvent;
+          const chunkRecord = chunk as {
+            type: string;
+            content?: unknown;
+            metadata?: ResponseMetadata;
+            raw?: string;
+            slide?: PptSlide;
           };
+          const eventName = streamEvent.event || inferEventName(chunkRecord.type);
+          const isRenderable = streamEvent.renderable ?? eventName.startsWith('render_');
           const currentPhaseLabel = phaseLabel[phase] || phaseLabel.thinking;
           
           if (phase !== 'done' && phase !== 'error') {
             setStreamPhase(phase);
-            streamPhaseStr = phase;
-            updateStep(phase, currentPhaseLabel, '');
           }
 
-          if (chunk.type === 'ppt_raw') {
-            const rawContent = (chunk as PptRawChunk).raw || '';
-            accumulatedText += rawContent;
+          if (eventName === 'render_result' && isRenderable && chunkRecord.type === 'ppt') {
+            const normalizedPpt = normalizePptData(chunkRecord.content as PptData);
+            const metadata = chunkRecord.metadata;
+            const backendContent = metadata?.backendContent || metadata?.summary || `PPT 已生成，共 ${normalizedPpt.slides.length} 页，可以预览或导出。`;
+            workingPpt = normalizedPpt;
+            renderedSlideCount = normalizedPpt.slides.length;
+            setPptData(normalizedPpt);
+            setResponseMetadata(metadata);
+            setCurrentSlideIndex(0);
+            setLeftTab('slides');
+            accumulatedContent += (accumulatedContent ? '\n\n' : '') + backendContent;
+            upsertStep(
+              phase,
+              currentPhaseLabel,
+              backendContent,
+              'done',
+              streamEvent.author,
+              eventName,
+              createThinkingSummary(chunkRecord, backendContent),
+            );
+            accumulatedSteps.forEach(s => { s.status = 'done'; });
+            updateAgentMessage();
+            updateSessionPpt(normalizedPpt, metadata);
+            setStreamProgress(`PPT 已生成 ${normalizedPpt.slides.length} 页`);
+            return;
+          }
 
-            const partialSlides = tryExtractPartialSlides(accumulatedText);
-            if (partialSlides && partialSlides.length > renderedSlideCount) {
-              const newSlides = partialSlides.map(normalizePptSlide);
-              const titleMatch = accumulatedText.match(/"title"\s*:\s*"([^"]+)"/);
-              if (titleMatch) pptTitle = titleMatch[1];
+          if (eventName === 'render_delta' && isRenderable && chunkRecord.type === 'ppt_slide') {
+            upsertSlide(chunkRecord.content || chunkRecord.slide);
+            const stepText = `已接收第 ${renderedSlideCount} 页可渲染数据。`;
+            upsertStep(
+              phase,
+              currentPhaseLabel,
+              stepText,
+              'running',
+              streamEvent.author,
+              eventName,
+              stepText,
+            );
+            updateAgentMessage();
+            return;
+          }
 
-              setPptData({ title: pptTitle || 'PPT', slides: newSlides });
-              renderedSlideCount = newSlides.length;
-            }
-            setStreamProgress(`已渲染 ${renderedSlideCount} 页...`);
-          } else if (chunk.type === 'status') {
-            const statusContent = (chunk as StatusChunk).content || '';
-            accumulatedText += statusContent;
-            
-            const text = statusContent.trim();
-            if (text !== '}' && text !== '{' && text !== ']' && text !== '[' && 
-                !text.startsWith('```') && 
-                !text.startsWith('"type":') &&
-                !text.startsWith('"id":') &&
-                !text.includes('"ppt_raw"')) {
-                if (!accumulatedReasoning.endsWith(text + '\n')) {
-                    accumulatedReasoning += statusContent + '\n';
-                }
-                updateStep(phase, currentPhaseLabel, statusContent);
-                setStreamProgress(text.substring(0, 50) + '...');
-                setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, reasoning: accumulatedReasoning, steps: [...accumulatedSteps] } : m));
-            }
-            
-            const partialSlides = tryExtractPartialSlides(accumulatedText);
-            if (partialSlides && partialSlides.length > renderedSlideCount) {
-              const newSlides = partialSlides.map(normalizePptSlide);
-              const titleMatch = accumulatedText.match(/"title"\s*:\s*"([^"]+)"/);
-              if (titleMatch) pptTitle = titleMatch[1];
-              setPptData({ title: pptTitle || 'PPT', slides: newSlides });
-              renderedSlideCount = newSlides.length;
-            }
-          } else if (chunk.type === 'user') {
-            const text = (chunk as UserChunk).content || '';
-            let displayContent = text;
-            if (text.startsWith('{') && text.includes('"type"') && text.includes('"user"')) {
-                try {
-                    const parsed = JSON.parse(text);
-                    if (parsed.content) displayContent = parsed.content;
-                } catch (e) {}
-            }
-            const padding = accumulatedContent && !accumulatedContent.endsWith('\n\n') ? '\n\n' : '';
-            accumulatedContent += padding + displayContent;
-            setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
-          } else if (chunk.type === 'token') {
-             const text = chunk.content?.trim() || '';
-             if (text !== '}' && text !== '{' && text !== ']' && text !== '[' && 
-                 !text.startsWith('```') && 
-                 !text.startsWith('"type":') &&
-                 !text.startsWith('"id":') &&
-                 !text.includes('"ppt_raw"')) {
-                 const stepIndex = accumulatedSteps.findIndex(s => s.phase === phase);
-                 if (stepIndex >= 0 && accumulatedSteps[stepIndex].content.endsWith(chunk.content + '\n')) {
-                     // Skip duplicate
-                 } else {
-                     updateStep(phase, currentPhaseLabel, chunk.content);
-                     setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
-                 }
-             }
-          } else if (chunk.type === 'error') {
-            accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ ${(chunk as ErrorChunk).content || '生成失败'}`;
-            setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
-          } else if (chunk.type === 'done' || chunk.type === 'drawio_done') {
+          if (eventName === 'process_delta' || eventName === 'process_result') {
+            const text = formatProcessChunkText(chunkRecord) || '收到过程事件。';
+            upsertStep(
+              phase,
+              currentPhaseLabel,
+              text,
+              eventName === 'process_result' ? 'done' : 'running',
+              streamEvent.author,
+              eventName,
+              createThinkingSummary(chunkRecord, currentPhaseLabel),
+            );
+            setStreamProgress(text.replace(/\s+/g, ' ').slice(0, 56));
+            updateAgentMessage();
+            return;
+          }
+
+          if (eventName === 'message' || chunkRecord.type === 'user') {
+            const displayContent = getChunkText(chunkRecord) || '需要补充信息。';
+            accumulatedContent += (accumulatedContent ? '\n\n' : '') + displayContent;
+            upsertStep(
+              phase,
+              currentPhaseLabel,
+              displayContent,
+              'done',
+              streamEvent.author,
+              eventName,
+              createThinkingSummary(chunkRecord, displayContent),
+            );
+            updateAgentMessage();
+            return;
+          }
+
+          if (eventName === 'error' || chunkRecord.type === 'error') {
+            const errorText = `生成失败：${getChunkText(chunkRecord) || '后端返回错误。'}`;
+            accumulatedContent += (accumulatedContent ? '\n\n' : '') + errorText;
+            upsertStep(
+              phase,
+              currentPhaseLabel,
+              errorText,
+              'done',
+              streamEvent.author,
+              eventName,
+              createThinkingSummary(chunkRecord, errorText),
+            );
+            accumulatedSteps.forEach(s => { s.status = 'done'; });
+            updateAgentMessage();
+            setStreamPhase('error');
+            setStreamProgress('');
+            return;
+          }
+
+          if (eventName === 'done' || chunkRecord.type === 'done') {
+            accumulatedSteps.forEach(s => { s.status = 'done'; });
+            updateAgentMessage();
             setStreamPhase('done');
+            return;
           }
+
+          const fallbackText = getChunkText(chunkRecord) || `收到 ${eventName} 事件。`;
+          upsertStep(
+            phase,
+            currentPhaseLabel,
+            fallbackText,
+            'done',
+            streamEvent.author,
+            eventName,
+            createThinkingSummary(chunkRecord, fallbackText),
+          );
+          updateAgentMessage();
         },
         (error: Error) => {
           console.error('Stream error:', error);
-          if (error.name !== 'AbortError' && renderedSlideCount === 0 && !accumulatedContent) {
-              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `❌ 连接异常: ${error.message}`;
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: m.steps?.map(s => ({...s, status: 'done'})) } : m));
-          } else {
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: m.steps?.map(s => ({...s, status: 'done'})) } : m));
+          if (error.name !== 'AbortError' && !accumulatedContent) {
+              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `连接异常: ${error.message}`;
           }
+          accumulatedSteps.forEach(s => { s.status = 'done'; });
+          updateAgentMessage();
           setIsSending(false);
           setStreamPhase('');
           setStreamProgress('');
@@ -1442,71 +1663,11 @@ ${content}`;
           setStreamPhase('');
           setStreamProgress('');
           accumulatedSteps.forEach(s => { s.status = 'done'; });
-
-          if (accumulatedText && renderedSlideCount === 0) {
-            const detectedPpt = tryParsePpt(accumulatedText);
-            if (detectedPpt) {
-              const normalizedPpt = normalizePptData(detectedPpt);
-              setPptData(normalizedPpt);
-              setCurrentSlideIndex(0);
-              renderedSlideCount = normalizedPpt.slides.length;
-              setSessions((prev) =>
-                prev.map((session) =>
-                  session.id === currentSessionIdRef
-                    ? { ...session, pptData: normalizedPpt, lastModified: Date.now() }
-                    : session
-                )
-              );
-              accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ PPT 已生成！共 ${normalizedPpt.slides.length} 页，可以预览或下载。`;
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
-            } else {
-              let displayContent = accumulatedText;
-              if (accumulatedText.trim().startsWith('{')) {
-                try {
-                  const parsed = JSON.parse(stripMdCodeBlock(accumulatedText));
-                  if (parsed.slides && Array.isArray(parsed.slides)) {
-                    const norm = normalizePptData(parsed);
-                    setPptData(norm);
-                    setCurrentSlideIndex(0);
-                    setSessions((prev) =>
-                      prev.map((session) =>
-                        session.id === currentSessionIdRef
-                          ? { ...session, pptData: norm, lastModified: Date.now() }
-                          : session
-                      )
-                    );
-                    accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ PPT 已生成！共 ${norm.slides.length} 页。`;
-                  } else {
-                    displayContent = parsed.message || parsed.content || parsed.text || '收到响应。';
-                    if (typeof displayContent !== 'string') displayContent = JSON.stringify(displayContent);
-                    accumulatedContent += (accumulatedContent ? '\n\n' : '') + displayContent;
-                  }
-                } catch {
-                  accumulatedContent += (accumulatedContent ? '\n\n' : '') + '收到响应，但无法解析 PPT 数据。';
-                }
-              }
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
-            }
-          } else if (renderedSlideCount > 0) {
-            const finalPpt = tryParsePpt(accumulatedText);
-            if (finalPpt && finalPpt.slides.length >= renderedSlideCount) {
-              const normalizedPpt = normalizePptData(finalPpt);
-              setPptData(normalizedPpt);
-              renderedSlideCount = normalizedPpt.slides.length;
-              setSessions((prev) =>
-                prev.map((session) =>
-                  session.id === currentSessionIdRef
-                    ? { ...session, pptData: normalizedPpt, lastModified: Date.now() }
-                    : session
-                )
-              );
-            }
-            accumulatedContent += (accumulatedContent ? '\n\n' : '') + `✅ PPT 已生成！共 ${renderedSlideCount} 页，可以预览或下载。`;
-            setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, content: accumulatedContent, steps: [...accumulatedSteps] } : m));
+          if (!accumulatedContent && renderedSlideCount > 0) {
+            accumulatedContent = `PPT 已生成 ${renderedSlideCount} 页，可以预览或导出。`;
             setCurrentSlideIndex(0);
-          } else {
-              setMessages(prev => prev.map(m => m.id === agentMsgId ? { ...m, steps: [...accumulatedSteps] } : m));
           }
+          updateAgentMessage();
         }
       );
       
@@ -1563,13 +1724,14 @@ ${content}`;
       setSessionId(newBackendId);
       setMessages([initialMsg]);
       setPptData(null);
+      setResponseMetadata(undefined);
       setCurrentSlideIndex(0);
 
       if (currentSessionId) {
         setSessions((prev) =>
           prev.map((session) => {
             if (session.id === currentSessionId) {
-              return { ...session, backendSessionId: newBackendId, messages: [initialMsg], pptData: null, lastModified: Date.now() };
+              return { ...session, backendSessionId: newBackendId, messages: [initialMsg], pptData: null, metadata: undefined, lastModified: Date.now() };
             }
             return session;
           })
@@ -1758,7 +1920,7 @@ ${content}`;
 
       if (el.kind === 'text') {
         const fontSizeNum = el.fontSize || 18;
-        let fontSize = Math.max(8, fontSizeNum * 0.7);
+        const fontSize = Math.max(8, fontSizeNum * 0.7);
         // Position-aware color detection: check if element center is on a dark area
         const elCenterX = elX + (el.w || 4) / 2;
         const elCenterY = elY + (el.h || 1) / 2;
@@ -1921,7 +2083,7 @@ ${content}`;
       }
 
       if (el.kind === 'table' && Array.isArray(el.rows) && el.rows.length > 0) {
-        const safeRows = el.rows.filter((r: any) => Array.isArray(r) && r.length > 0);
+        const safeRows = el.rows.filter((row): row is string[] => Array.isArray(row) && row.length > 0);
         if (safeRows.length === 0) return null;
         return (
           <div
@@ -1938,7 +2100,7 @@ ${content}`;
               <tbody>
                 {safeRows.map((row, ri) => (
                   <tr key={ri}>
-                    {row.map((cell: any, ci: number) => (
+                    {row.map((cell, ci) => (
                       <td
                         key={ci}
                         className="border px-0.5 py-0.5 text-center"
@@ -2234,12 +2396,15 @@ ${content}`;
   return (
     <div className="flex flex-col h-screen w-full overflow-hidden bg-slate-50 text-slate-900 font-sans">
       {/* ===== Header Bar ===== */}
-      <header className="h-14 px-6 bg-white border-b border-slate-100/60 flex items-center justify-between shrink-0 z-40">
+      <header className="ppt-atelier-header">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm shadow-indigo-200">
+          <div className="ppt-atelier-mark">
             <Icons.FilePresentation className="text-white w-5 h-5" />
           </div>
-          <h1 className="text-lg font-bold text-slate-800 tracking-tight">AI PPT <span className="text-slate-400 font-normal text-sm ml-2">@小傅哥</span></h1>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">Presentation Atelier</p>
+            <h1 className="text-lg font-bold text-slate-800 tracking-tight">AI PPT <span className="xerina-inline">xerina</span></h1>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
@@ -2247,8 +2412,7 @@ ${content}`;
             onClick={() => router.push('/')}
             className="flex items-center gap-2 px-4 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900 transition-all text-sm font-medium shadow-sm active:scale-95"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            返回工作台
+            返回主页
           </button>
 
           <a
@@ -2319,6 +2483,20 @@ ${content}`;
           )}
         </div>
       </header>
+
+      {(responseMetadata?.summary || responseMetadata?.suggestions?.length || responseMetadata?.nextActions?.length) && (
+        <section className="ppt-metadata-strip">
+          {responseMetadata?.summary && (
+            <p><span>summary</span>{responseMetadata.summary}</p>
+          )}
+          {responseMetadata?.suggestions?.slice(0, 2).map((item) => (
+            <p key={item}><span>suggest</span>{item}</p>
+          ))}
+          {responseMetadata?.nextActions?.slice(0, 2).map((item) => (
+            <p key={item}><span>next</span>{item}</p>
+          ))}
+        </section>
+      )}
 
       {/* ===== Main 3-Column Layout ===== */}
       <div className="flex flex-1 w-full overflow-hidden">
@@ -2656,11 +2834,20 @@ ${content}`;
           {/* Chat Sidebar - Modern & Elegant */}
         <div 
           className={`
-            border-l border-slate-100/60 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]
-            ${isChatOpen ? 'w-[380px] translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'}
+            relative border-l border-slate-100/60 bg-white flex flex-col transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]
+            ${isChatOpen ? 'translate-x-0' : 'w-0 translate-x-full opacity-0 overflow-hidden'}
             shadow-xl z-20
           `}
+          style={{ width: isChatOpen ? `${chatWidth}px` : 0 }}
         >
+          {isChatOpen && (
+            <button
+              aria-label="调整对话面板宽度"
+              className={`absolute left-0 top-0 z-30 h-full w-2 -translate-x-1 cursor-col-resize transition-colors ${isResizingChat ? 'bg-indigo-300/70' : 'bg-transparent hover:bg-indigo-200/60'}`}
+              onMouseDown={handleStartChatResize}
+              type="button"
+            />
+          )}
           {/* Chat Header */}
           <div className="h-14 px-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
             <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -2674,8 +2861,10 @@ ${content}`;
                   className="w-full bg-transparent text-sm font-bold text-slate-800 focus:outline-none cursor-pointer truncate appearance-none pr-4"
                   style={{ backgroundImage: 'none' }}
                 >
-                  {agents.length === 0 && <option value="">Loading agents...</option>}
-                  {agents.map(agent => (
+                  {agents.filter((agent) => agent.agentId === PPT_AGENT_ID).length === 0 && (
+                    <option value={PPT_AGENT_ID}>AI交互式PPT生成智能体</option>
+                  )}
+                  {agents.filter((agent) => agent.agentId === PPT_AGENT_ID).map(agent => (
                     <option key={agent.agentId} value={agent.agentId}>
                       {agent.agentName}
                     </option>
@@ -2724,38 +2913,53 @@ ${content}`;
                         {/* Steps / Reasoning Block */}
                         {msg.role === 'agent' && ((msg.steps && msg.steps.length > 0) || msg.reasoning) && (
                           <div className="w-full max-w-full">
-                            <details className="w-full group/details open:pb-2" open={index === messages.length - 1 && isSending}>
-                              <summary className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700 font-medium select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm transition-all hover:border-slate-300">
-                                 <Icons.Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                                 <span className="group-open/details:hidden">展开执行步骤</span>
-                                 <span className="hidden group-open/details:inline">收起执行步骤</span>
-                              </summary>
-                              <div className="mt-2 flex flex-col gap-2 p-3 bg-slate-50/50 border border-slate-200 rounded-xl shadow-sm text-sm text-slate-600 max-w-none overflow-x-auto">
+                            <div className="w-full">
+                              <button
+                                className="inline-flex max-w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50/40"
+                                onClick={() => handleToggleThinking(msg.id)}
+                                type="button"
+                              >
+                                 <Icons.Sparkles className="w-3.5 h-3.5 shrink-0 text-indigo-400" />
+                                 <span className="truncate">
+                                   {msg.thinkingOpen ? '收起思考过程' : `思考过程 · ${(msg.steps?.length || 0)} 个阶段`}
+                                 </span>
+                                 {msg.steps?.some(step => step.status === 'running') && (
+                                   <Icons.Loader className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                                 )}
+                              </button>
+                              {msg.thinkingOpen && (
+                              <div className="mt-2 flex max-h-[360px] flex-col gap-2 overflow-y-auto rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50/80 p-3 text-sm text-slate-600 shadow-sm">
                                  {msg.steps && msg.steps.length > 0 ? (
-                                   msg.steps.map((step, idx) => (
-                                     <div key={idx} className="flex flex-col gap-1.5 p-2 bg-white rounded-lg border border-slate-100 shadow-sm">
-                                         <div className="flex items-center gap-2 font-medium text-slate-700">
-                                             {step.status === 'running' ? (
-                                                <Icons.Loader className="w-3.5 h-3.5 text-indigo-500" />
-                                             ) : (
-                                                <span className="text-green-500">✓</span>
-                                             )}
-                                             <span>{step.label}</span>
-                                         </div>
-                                         {step.content && (
-                                             <div className="text-xs text-slate-500 pl-6 border-l-2 border-slate-100 ml-1.5 prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
-                                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
-                                           </div>
-                                         )}
-                                     </div>
-                                   ))
-                                 ) : (
+                                    msg.steps.map((step, idx) => (
+                                      <details key={step.id || `${step.phase}-${idx}`} className="group rounded-xl border border-slate-100 bg-white shadow-sm">
+                                          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 [&::-webkit-details-marker]:hidden">
+                                              {step.status === 'running' ? (
+                                                 <Icons.Loader className="w-3.5 h-3.5 text-indigo-500" />
+                                              ) : (
+                                                 <span className="text-green-500">完成</span>
+                                              )}
+                                              <span className="min-w-0 flex-1 truncate">{step.label} · {step.summary || normalizeInlineText(step.content).slice(0, 34)}</span>
+                                              {step.event && (
+                                                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+                                                  {step.event}
+                                                </span>
+                                              )}
+                                          </summary>
+                                          {step.content && (
+                                              <div className="mx-3 mb-3 border-l-2 border-slate-100 pl-3 text-xs text-slate-500 prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                                            </div>
+                                          )}
+                                      </details>
+                                    ))
+                                  ) : (
                                    <div className="p-2 bg-white rounded-lg border border-slate-100 shadow-sm prose prose-sm prose-slate max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-100 prose-pre:text-slate-700">
                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.reasoning || ''}</ReactMarkdown>
                                    </div>
                                  )}
                               </div>
-                            </details>
+                              )}
+                            </div>
                           </div>
                         )}
 
