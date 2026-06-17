@@ -1,0 +1,8 @@
+node_modules
+.git
+.idea
+.walicode
+*.log
+Dockerfile.local
+output
+.next/cache

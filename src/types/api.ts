@@ -204,3 +204,48 @@ export type StreamChunkV2 =
     | DrawioResultChunkV2
     | ErrorChunkV2
     | DoneChunkV2;
+// ===== Prompt Agent 类型 =====
+
+export type PromptMode = "generate" | "rewrite" | "partial_rewrite";
+
+export interface PromptRequestDTO {
+    agentId?: string;
+    userId: string;
+    sessionId?: string;
+    mode?: PromptMode;
+    taskType?: string;
+    goal?: string;
+    currentPrompt?: string;
+    selectedPromptText?: string;
+    editInstruction?: string;
+    constraints?: string;
+    outputFormat?: string;
+    customBaseUrl?: string;
+    customApiKey?: string;
+    customCompletionsPath?: string;
+    customModel?: string;
+}
+
+export interface PromptResponseDTO {
+    sessionId: string;
+    type: string;
+    content: string;
+    metadata?: ResponseMetadata;
+}
+
+export interface PromptStreamChunk {
+    type: string;
+    content?: string | Record<string, unknown>;
+    metadata?: ResponseMetadata;
+    raw?: string;
+}
+
+export interface PromptStreamEvent {
+    seq?: number;
+    phase: string;
+    author?: string;
+    event?: string;
+    renderable?: boolean;
+    final?: boolean;
+    chunk: PromptStreamChunk;
+}

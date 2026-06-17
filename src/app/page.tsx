@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   ArrowRight,
+  FileText,
   LogOut,
   Network,
   PenLine,
@@ -36,6 +37,17 @@ const products = [
     icon: Network,
     accent: 'var(--xerina-cyan)',
     meta: ['xml rendering', 'canvas context', 'step telemetry'],
+  },
+  {
+    href: '/prompt',
+    agentId: '300002',
+    title: 'Prompt Forge',
+    label: 'Prompt',
+    desc: '从零生成、整体改写或局部精修 Prompt，支持流式生成与 Markdown 导出。',
+    cta: '进入提示词工坊',
+    icon: FileText,
+    accent: 'var(--xerina-gold)',
+    meta: ['md export', 'stream craft', 'partial edit'],
   },
 ];
 
@@ -148,3 +160,5 @@ export default function Home() {
     </main>
   );
 }
+
+

@@ -9,7 +9,10 @@ import {
     PptSlide,
     ResponseMetadata,
     StreamEventType,
-    StreamPhase
+    StreamPhase,
+    PromptRequestDTO,
+    PromptResponseDTO,
+    PromptStreamEvent
 } from '@/types/api';
 
 const handleResponse = async <T>(response: globalThis.Response): Promise<Response<T>> => {
@@ -277,5 +280,108 @@ export const agentApi = {
         }
 
         return controller;
+    },
+
+    /**
+     * Prompt Generate (blocking)
+     * Path: /api/v1/prompt/generate_prompt
+     */
+    generatePrompt: async (data: PromptRequestDTO): Promise<Response<PromptResponseDTO>> => {
+        const response = await fetch(`${API_CONFIG.BASE_URL}/prompt/generate_prompt`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data),
+        });
+        return handleResponse<PromptResponseDTO>(response);
+    },
+
+    /**
+     * Prompt Generate Stream (NDJSON streaming)
+     * Path: /api/v1/prompt/generate_prompt_stream
+     */
+    generatePromptStream: async (
+        data: PromptRequestDTO,
+        onEvent: (event: PromptStreamEvent) => void,
+        onError: (error: Error) => void,
+        onComplete: () => void
+    ): Promise<AbortController> => {
+        const controller = new AbortController();
+
+        try {
+            const response = await fetch(`${API_CONFIG.BASE_URL}/prompt/generate_prompt_stream`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                onError(new Error(`HTTP error! status: ${response.status}, message: ${errorText}`));
+                return controller;
+            }
+
+            const reader = response.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            const processStream = async () => {
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (!trimmed) continue;
+
+                            try {
+                                const event: PromptStreamEvent = JSON.parse(trimmed);
+                                onEvent(event);
+                            } catch {
+                                console.warn('Failed to parse prompt stream event:', trimmed);
+                            }
+                        }
+                    }
+
+                    if (buffer.trim()) {
+                        try {
+                            const event: PromptStreamEvent = JSON.parse(buffer.trim());
+                            onEvent(event);
+                        } catch {}
+                    }
+
+                    if (!controller.signal.aborted) {
+                        onComplete();
+                    }
+                } catch (err: unknown) {
+                    if (err instanceof DOMException && err.name === 'AbortError') {
+                        onComplete();
+                        return;
+                    }
+                    onError(err instanceof Error ? err : new Error(String(err)));
+                }
+            };
+
+            processStream();
+        } catch (err: unknown) {
+            if (!(err instanceof DOMException && err.name === 'AbortError')) {
+                onError(err instanceof Error ? err : new Error(String(err)));
+            }
+        }
+
+        return controller;
     }
 };
+
+
+
